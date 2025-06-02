@@ -1,9 +1,12 @@
 import streamlit as st
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, message=".*is_categorical_dtype is deprecated.*")
 from rdkit import Chem
 from rdkit.Chem import Draw
 import joblib
 import pandas as pd
 import deepchem as dc
+
 
 # Try to import streamlit_ketcher for drawing, provide fallback if unavailable
 try:
@@ -140,15 +143,15 @@ def load_dataset():
 # Set up the app layout with tabs
 st.title("FluroML: Molecular Fluorescence Predictor")
 tab1, tab2, tab3, tab4 = st.tabs([
-    ">ê Fluorescence Classification",
-    "=É Absorption Max Prediction",
-    "=È Emission Max Prediction",
+    ">Ãª Fluorescence Classification",
+    "=Ã‰ Absorption Max Prediction",
+    "=Ãˆ Emission Max Prediction",
     "=, FRET Pair Analysis"
 ])
 
 # Tab 1: Fluorescence Classification
 with tab1:
-    st.markdown("## >ê Fluorescence Classification")
+    st.markdown("## >Ãª Fluorescence Classification")
     input_method = st.radio("Input Method:", ("SMILES Input", "Draw Molecule", "Upload File"), key="fluoro_method")
     smiles = ""
     if input_method == "SMILES Input":
@@ -177,7 +180,7 @@ with tab1:
 
 # Tab 2: Absorption Max Prediction
 with tab2:
-    st.markdown("## =É Absorption Max Prediction")
+    st.markdown("## =Ã‰ Absorption Max Prediction")
     input_method2 = st.radio("Input Method:", ("SMILES Input", "Draw Molecule", "Upload File"), key="abs_method")
     abs_smiles = ""
     if input_method2 == "SMILES Input":
@@ -209,7 +212,7 @@ with tab2:
 
 # Tab 3: Emission Max Prediction
 with tab3:
-    st.markdown("## =È Emission Max Prediction")
+    st.markdown("## =Ãˆ Emission Max Prediction")
     input_method3 = st.radio("Input Method:", ("SMILES Input", "Draw Molecule", "Upload File"), key="em_method")
     em_smiles = ""
     if input_method3 == "SMILES Input":
@@ -317,4 +320,4 @@ with tab4:
                                 st.table(top_candidates.reset_index(drop=True))
 # Footer
 st.write("---")
-st.caption("FluroML-©PDeshmukh")
+st.caption("FluroML-Â©PDeshmukh")
