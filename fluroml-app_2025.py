@@ -1,6 +1,4 @@
 import streamlit as st
-import warnings
-warnings.filterwarnings("ignore", category=UserWarning, message=".*is_categorical_dtype is deprecated.*")
 from rdkit import Chem
 from rdkit.Chem import Draw
 import joblib
