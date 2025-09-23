@@ -1,0 +1,284 @@
+import streamlit as st
+from rdkit import Chem
+from rdkit.Chem import Draw
+import joblib
+import pandas as pd
+import numpy as np
+
+# ✅ Import only what’s needed from DeepChem (avoids circular import bug)
+from deepchem.feat import CircularFingerprint, MACCSKeysFingerprint
+
+# Try to import streamlit_ketcher for drawing, fallback if missing
+try:
+    from streamlit_ketcher import st_ketcher
+except ImportError:
+    def st_ketcher(*args, **kwargs):
+        st.warning("⚠️ streamlit-ketcher not installed. Install it to draw molecules.")
+        return ""
+
+# ----------------------------
+# Streamlit Page Config
+# ----------------------------
+st.set_page_config(
+    page_title="FluroML - Molecular Prediction",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ----------------------------
+# Load Models
+# ----------------------------
+@st.cache_resource
+def load_model(path: str):
+    try:
+        return joblib.load(path)
+    except Exception as e:
+        st.error(f"⚠️ Error loading model from {path}: {e}")
+        return None
+
+model_fluorescence = load_model("best_classifier_compatible.joblib")
+model_regression   = load_model("new_best_regressor_compatible.joblib")
+model_emission     = load_model("best_regressor_emission_compatible.joblib")
+
+# ----------------------------
+# Helper Functions
+# ----------------------------
+def smiles_to_morgan(smiles: str):
+    """Convert SMILES to Morgan fingerprint."""
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        st.error("❌ Invalid SMILES string.")
+        return None
+    featurizer = CircularFingerprint(radius=3, size=1024)
+    try:
+        return featurizer.featurize([mol])[0]
+    except Exception as fe:
+        st.error(f"❌ Featurization failed: {fe}")
+        return None
+
+def smiles_to_descriptors(smiles: str):
+    """Convert SMILES to MACCS descriptors."""
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        st.error("❌ Invalid SMILES string.")
+        return None
+    featurizer = MACCSKeysFingerprint()
+    try:
+        return pd.DataFrame(featurizer.featurize([mol]))
+    except Exception as fe:
+        st.error(f"❌ Descriptor generation failed: {fe}")
+        return None
+
+def draw_molecule(smiles: str):
+    """Return RDKit molecule image."""
+    mol = Chem.MolFromSmiles(smiles)
+    return Draw.MolToImage(mol, size=(300, 300)) if mol else None
+
+def predict(model, features):
+    """Make safe predictions."""
+    if model is None:
+        return None
+    X = features.values if isinstance(features, pd.DataFrame) else np.array(features)
+    if X.ndim == 1:
+        X = X.reshape(1, -1)
+    try:
+        pred = model.predict(X)
+    except Exception as pe:
+        st.error(f"⚠️ Prediction failed: {pe}")
+        return None
+    return float(pred[0]) if hasattr(pred, "__len__") else float(pred)
+
+def read_molecule_file(uploaded_file):
+    """Read molecule from .smi, .mol, .sdf file."""
+    filename = uploaded_file.name.lower()
+    data = uploaded_file.getvalue()
+
+    if filename.endswith(".smi"):
+        content = data.decode("utf-8", errors="ignore").splitlines()
+        lines = [line.strip() for line in content if line.strip()]
+        if not lines:
+            st.error("❌ Empty SMI file.")
+            return None
+        return lines[0].split()[0]
+
+    elif filename.endswith(".mol"):
+        mol = Chem.MolFromMolBlock(data.decode("utf-8", errors="ignore"))
+        return Chem.MolToSmiles(mol) if mol else None
+
+    elif filename.endswith(".sdf"):
+        content = data.decode("utf-8", errors="ignore").split("$$$$")
+        entries = [e for e in content if e.strip()]
+        if not entries:
+            st.error("❌ Empty SDF file.")
+            return None
+        mol = Chem.MolFromMolBlock(entries[0])
+        return Chem.MolToSmiles(mol) if mol else None
+
+    st.error("❌ Unsupported file format.")
+    return None
+
+# ----------------------------
+# Dataset for FRET
+# ----------------------------
+@st.cache_data
+def load_dataset():
+    try:
+        return pd.read_csv("All Properties with Finguprints_3.csv")
+    except Exception as e:
+        st.error(f"⚠️ Error loading dataset: {e}")
+        return None
+
+# ----------------------------
+# App Layout
+# ----------------------------
+st.title("FluroML: Molecular Fluorescence Predictor")
+
+tab1, tab2, tab3, tab4 = st.tabs([
+    "Fluorescence Classification",
+    "Absorption Max Prediction",
+    "Emission Max Prediction",
+    "FRET Analysis"
+])
+
+# ----------------------------
+# Tab 1: Fluorescence Classification
+# ----------------------------
+with tab1:
+    st.markdown("## 🧪 Fluorescence Classification")
+    method = st.radio("Input Method:", ("SMILES Input", "Draw Molecule", "Upload File"), key="fluoro_method")
+    smiles = ""
+
+    if method == "SMILES Input":
+        smiles = st.text_input("Enter SMILES:", key="fluorescence_smiles")
+    elif method == "Upload File":
+        file = st.file_uploader("Upload (.smi, .mol, .sdf)", type=["smi", "mol", "sdf"], key="fluoro_file")
+        if file: smiles = read_molecule_file(file) or ""
+    else:
+        smiles = st_ketcher("")
+
+    if smiles and model_fluorescence:
+        features = smiles_to_morgan(smiles)
+        if features is not None:
+            with st.spinner("Predicting..."):
+                pred = predict(model_fluorescence, features)
+            st.image(draw_molecule(smiles), caption="Molecule Structure")
+            if pred is not None:
+                st.success("✨ Fluorescent" if int(pred) == 1 else "❌ Non-Fluorescent")
+
+# ----------------------------
+# Tab 2: Absorption Max Prediction
+# ----------------------------
+with tab2:
+    st.markdown("## 🌈 Absorption Max Prediction")
+    method = st.radio("Input Method:", ("SMILES Input", "Draw Molecule", "Upload File"), key="abs_method")
+    abs_smiles = ""
+
+    if method == "SMILES Input":
+        abs_smiles = st.text_input("Molecule SMILES:", key="abs_smiles")
+    elif method == "Upload File":
+        file = st.file_uploader("Upload molecule", type=["smi", "mol", "sdf"], key="abs_file")
+        if file: abs_smiles = read_molecule_file(file) or ""
+    else:
+        abs_smiles = st_ketcher("")
+
+    solvent = st.text_input("Solvent SMILES (e.g., 'O' for water):", key="abs_solvent")
+
+    if abs_smiles and solvent and model_regression:
+        desc_smiles = smiles_to_descriptors(abs_smiles)
+        desc_solvent = smiles_to_descriptors(solvent)
+        if desc_smiles is not None and desc_solvent is not None:
+            features = pd.concat([desc_smiles, desc_solvent], axis=1)
+            with st.spinner("Predicting Absorption..."):
+                pred = predict(model_regression, features)
+            st.image(draw_molecule(abs_smiles), caption="Molecule Structure")
+            if pred is not None:
+                st.success(f"Predicted Absorption Max: {pred:.2f} nm")
+
+# ----------------------------
+# Tab 3: Emission Max Prediction
+# ----------------------------
+with tab3:
+    st.markdown("## 🔦 Emission Max Prediction")
+    method = st.radio("Input Method:", ("SMILES Input", "Draw Molecule", "Upload File"), key="em_method")
+    em_smiles = ""
+
+    if method == "SMILES Input":
+        em_smiles = st.text_input("Molecule SMILES:", key="em_smiles")
+    elif method == "Upload File":
+        file = st.file_uploader("Upload molecule", type=["smi", "mol", "sdf"], key="em_file")
+        if file: em_smiles = read_molecule_file(file) or ""
+    else:
+        em_smiles = st_ketcher("")
+
+    solvent_em = st.text_input("Solvent SMILES (e.g., 'O' for water):", key="em_solvent")
+
+    if em_smiles and solvent_em and model_emission:
+        desc_smiles = smiles_to_descriptors(em_smiles)
+        desc_solvent = smiles_to_descriptors(solvent_em)
+        if desc_smiles is not None and desc_solvent is not None:
+            features = pd.concat([desc_smiles, desc_solvent], axis=1)
+            with st.spinner("Predicting Emission..."):
+                pred = predict(model_emission, features)
+            st.image(draw_molecule(em_smiles), caption="Molecule Structure")
+            if pred is not None:
+                st.success(f"Predicted Emission Max: {pred:.2f} nm")
+
+# ----------------------------
+# Tab 4: FRET Analysis
+# ----------------------------
+with tab4:
+    st.markdown("## 🔬 FRET Pair Analysis")
+    method = st.radio("Donor Input:", ("SMILES Input", "Draw Molecule", "Upload File"), key="fret_method")
+    donor_smiles = ""
+
+    if method == "SMILES Input":
+        donor_smiles = st.text_input("Donor SMILES:", key="fret_donor")
+    elif method == "Upload File":
+        file = st.file_uploader("Upload donor molecule", type=["smi", "mol", "sdf"], key="fret_file")
+        if file: donor_smiles = read_molecule_file(file) or ""
+    else:
+        donor_smiles = st_ketcher("")
+
+    if donor_smiles and model_emission:
+        df = load_dataset()
+        if df is not None:
+            # ✅ Corrected column names
+            required_cols = {"Smiles", "AbsorptionMax (nm)", "EmissionMax (nm)", "Fluorescent labeling"}
+            if required_cols.issubset(df.columns):
+                donor_desc = smiles_to_descriptors(donor_smiles)
+                solvent_desc = smiles_to_descriptors("O")  # assume water
+                if donor_desc is not None and solvent_desc is not None:
+                    features = pd.concat([donor_desc, solvent_desc], axis=1)
+                    donor_em = predict(model_emission, features)
+                    if donor_em is not None:
+                        df_cand = df[df["Fluorescent labeling"].astype(str).str.lower().isin(["yes", "true", "1"])]
+                        df_cand = df_cand[df_cand["AbsorptionMax (nm)"].notna()]
+                        df_cand = df_cand[df_cand["Smiles"] != donor_smiles]
+
+                        if not df_cand.empty:
+                            df_cand["abs_diff"] = (df_cand["AbsorptionMax (nm)"] - donor_em).abs()
+                            best = df_cand.sort_values("abs_diff").iloc[0]
+                            best_smiles = best["Smiles"]
+                            best_abs = best["AbsorptionMax (nm)"]
+                            best_em = best["EmissionMax (nm)"]
+                            fret_eff = (best_abs / (donor_em + best_abs)) * 100
+
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.image(draw_molecule(donor_smiles), caption="Donor Molecule")
+                                st.write(f"**Predicted Donor Emission:** {donor_em:.2f} nm")
+                            with col2:
+                                st.image(draw_molecule(best_smiles), caption="Top Acceptor")
+                                st.write(f"**Acceptor Absorption:** {best_abs:.2f} nm")
+                                if pd.notna(best_em):
+                                    st.write(f"**Acceptor Emission:** {best_em:.2f} nm")
+                                st.write(f"**FRET Efficiency:** {fret_eff:.2f}%")
+
+                            st.markdown("**Top 5 Matches:**")
+                            st.dataframe(df_cand.nsmallest(5, "abs_diff")[["Smiles", "AbsorptionMax (nm)", "EmissionMax (nm)", "abs_diff"]])
+            else:
+                st.error("Dataset missing required columns.")
+
+# Footer
+st.write("---")
+st.caption("FluroML © PDeshmukh")
