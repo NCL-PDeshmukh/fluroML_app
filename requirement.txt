@@ -1,26 +1,26 @@
-# ✅ Force RDKit to install first (before Streamlit upgrades protobuf)
+# ---------------- RDKit (works on Python 3.10 via pip) ----------------
 rdkit-pypi==2022.9.5
 
-# Streamlit must be <=1.29 to avoid upgrading protobuf to 6.x
+# ---------------- Streamlit (stable without protobuf conflicts) ----------------
 streamlit==1.28.0
 streamlit-ketcher==0.0.1
 
-# Scientific libraries — compatible with RDKit + Python 3.10
+# ---------------- Core Scientific Libraries ----------------
 numpy==1.23.5
 pandas==1.5.3
 scikit-learn==1.1.2
 joblib==1.3.1
 matplotlib==3.7.1
 
-# If using DeepChem:
+# ---------------- DeepChem + Compatible SciPy ----------------
 deepchem==2.7.1
-scipy==1.8.1
+scipy==1.8.1       # must be <1.9 for DeepChem
 
-# Tensorflow compatible with scipy & protobuf:
+# ---------------- TensorFlow + Protobuf (compatible set) ----------------
 tensorflow==2.10.1
-protobuf==3.19.6
+protobuf==3.19.6   # works with TF 2.10 and RDKit
 
-# Optional torch support:
+# ---------------- PyTorch + Graph Libraries (optional, safe versions) ----------------
 torch==1.12.0
 torch-geometric==2.0.4
 pytorch-lightning==1.5.10
