@@ -1,0 +1,15 @@
+# Core app dependencies
+streamlit==1.39.0
+streamlit-ketcher==0.0.1
+rdkit-pypi==2022.9.5
+pandas==2.2.3
+numpy==1.26.4
+joblib==1.4.2
+scikit-learn==1.5.2
+matplotlib==3.9.2
+
+# Light DeepChem-compatible core (no TensorFlow / Torch)
+deepchem==2.7.1
+protobuf==3.20.3
+
+# Optional (if streamlit-cloud fails again, comment out deepchem)
