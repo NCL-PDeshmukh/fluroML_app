@@ -1,26 +1,18 @@
-# ---------------- RDKit (works on Python 3.10 via pip) ----------------
-rdkit-pypi==2022.9.5
-
-# ---------------- Streamlit (stable without protobuf conflicts) ----------------
+# Core app requirement
 streamlit==1.28.0
-streamlit-ketcher==0.0.1
 
-# ---------------- Core Scientific Libraries ----------------
-numpy==1.23.5
+# RDKit for SMILES handling and molecular fingerprints
+rdkit==2023.9.5
+
+# Data handling + Machine Learning
 pandas==1.5.3
+numpy==1.23.5
 scikit-learn==1.1.2
 joblib==1.3.1
+
+# Plotting
 matplotlib==3.7.1
+pillow==10.2.0
 
-# ---------------- DeepChem + Compatible SciPy ----------------
-deepchem==2.7.1
-scipy==1.8.1       # must be <1.9 for DeepChem
-
-# ---------------- TensorFlow + Protobuf (compatible set) ----------------
-tensorflow==2.10.1
-protobuf==3.19.6   # works with TF 2.10 and RDKit
-
-# ---------------- PyTorch + Graph Libraries (optional, safe versions) ----------------
-torch==1.12.0
-torch-geometric==2.0.4
-pytorch-lightning==1.5.10
+# Molecule drawing widget (optional, safe)
+streamlit-ketcher==0.0.1
