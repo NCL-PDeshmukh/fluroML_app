@@ -1,4 +1,4 @@
-# fluroml_jsme_with_donor_absorption.py
+# fluroml_jsme_with_stmol_donor_absorption.py
 import streamlit as st
 from rdkit import Chem
 import joblib
@@ -8,6 +8,28 @@ import streamlit.components.v1 as components
 import urllib.parse
 import numpy as np
 import matplotlib.pyplot as plt
+
+# Browser-based 2D renderer
+# Requires: st-mol in requirements.txt (e.g., st-mol==0.0.3)
+try:
+    from st_mol import st_mol
+    _ST_MOL_AVAILABLE = True
+except Exception:
+    _ST_MOL_AVAILABLE = False
+
+def show_mol(smiles: str, width: int = 400, height: int = 300):
+    """Show a 2D structure in the app (browser-based)."""
+    if not smiles:
+        return
+    if _ST_MOL_AVAILABLE:
+        try:
+            st_mol(smiles, width=width, height=height)
+            return
+        except Exception:
+            # fallback to plain SMILES if rendering fails
+            pass
+    st.write("Structure preview not available; SMILES:")
+    st.write(smiles)
 
 # --- JSME Editor helper (Full/default toolbar) ---
 def jsme_editor(key: str, width: int = 520, height: int = 360, initial_smiles: str = "") -> str:
@@ -26,14 +48,12 @@ def jsme_editor(key: str, width: int = 520, height: int = 360, initial_smiles: s
 
     # Otherwise render the editor HTML (which will allow user to export SMILES)
     jsme_js_url = "https://jsme-editor.github.io/dist/jsme.nocache.js"
-    # ensure initial_smiles is properly encoded for use in JS
     initial_enc = urllib.parse.quote(initial_smiles or "")
     html = f"""
     <div id="jsme_container_{key}" style="border:1px solid #ddd; width:{width}px; height:{height}px;"></div>
     <div style="margin-top:6px;">
       <button id="export_{key}" style="margin-right:8px;">Export SMILES</button>
       <button id="clear_{key}">Clear Editor</button>
-      <span style="margin-left:10px;color:#555;font-size:0.9rem;">(Use Export to send SMILES back to the app)</span>
     </div>
 
     <script src="{jsme_js_url}"></script>
@@ -82,7 +102,7 @@ def jsme_editor(key: str, width: int = 520, height: int = 360, initial_smiles: s
 
 # --- Streamlit App configuration ---
 st.set_page_config(
-    page_title="FluroML - Molecular Prediction (JSME)",
+    page_title="FluroML - Molecular Prediction (JSME + 2D Preview)",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -101,23 +121,21 @@ model_fluorescence = load_model("best_classifier_compatible.joblib")
 model_regression   = load_model("new_best_regressor_compatible.joblib")  # absorption model
 model_emission     = load_model("best_regressor_emission_compatible.joblib")
 
-# Helper functions
+# Helper functions (featurizers, predict, file reading)
 def smiles_to_morgan(smiles: str):
-    """Convert SMILES to Morgan fingerprint vector using DeepChem CircularFingerprint."""
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         st.error("Invalid SMILES string.")
         return None
     featurizer = dc.feat.CircularFingerprint(radius=3, size=1024)
     try:
-        features = featurizer.featurize([mol])[0]  # Returns a numpy array (1024,)
+        features = featurizer.featurize([mol])[0]
     except Exception as fe:
         st.error(f"Failed to featurize molecule: {fe}")
         return None
     return features
 
 def smiles_to_descriptors(smiles: str):
-    """Convert SMILES to MACCS key descriptors (returns a DataFrame row)."""
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         st.error("Invalid SMILES string.")
@@ -131,7 +149,6 @@ def smiles_to_descriptors(smiles: str):
     return pd.DataFrame(features)
 
 def predict(model, features):
-    """Make a prediction using a trained model and feature vector."""
     if model is None:
         return None
     import numpy as _np
@@ -146,7 +163,6 @@ def predict(model, features):
     return pred[0] if hasattr(pred, "__len__") and not isinstance(pred, str) else pred
 
 def read_molecule_file(uploaded_file):
-    """Read a molecule file (.mol, .sdf, .smi) and return a SMILES string."""
     filename = uploaded_file.name
     data = uploaded_file.getvalue()
     if filename.lower().endswith('.smi'):
@@ -192,11 +208,8 @@ def load_dataset():
         st.error(f"Error loading dataset: {e}")
         return None
 
-# Notify user about drawing method
-st.info("This app uses the JSME 2D editor for structure drawing. Use 'Export SMILES' to send the structure to the app.")
-
 # App layout
-st.title("FluroML: Molecular Fluorescence Predictor (JSME Editor)")
+st.title("FluroML: Molecular Fluorescence Predictor")
 tab1, tab2, tab3, tab4 = st.tabs([
     "Fluorescence Classification",
     "Absorption Max Prediction",
@@ -220,15 +233,19 @@ with tab1:
         if jsmi:
             smiles = urllib.parse.unquote(jsmi)
             st.success("Structure exported from JSME.")
-            st.write(f"**SMILES from drawing:** `{smiles}`")
+            # No banner; show 2D below
 
     if smiles:
+        # show 2D preview (all SMILES sources)
+        st.subheader("Structure Preview")
+        show_mol(smiles, width=500, height=350)
+
+        st.write("Molecule SMILES:", smiles)
         if model_fluorescence:
             features = smiles_to_morgan(smiles)
             if features is not None:
                 with st.spinner("Predicting fluorescence..."):
                     prediction = predict(model_fluorescence, features)
-                st.write("Molecule SMILES:", smiles)
                 if prediction is None:
                     st.error("Prediction could not be made.")
                 else:
@@ -256,9 +273,13 @@ with tab2:
         if jsmi2:
             abs_smiles = urllib.parse.unquote(jsmi2)
             st.success("Structure exported from JSME.")
-            st.write(f"**SMILES from drawing:** `{abs_smiles}`")
 
     solvent = st.text_input("Enter Solvent SMILES (e.g., 'O' for water):", key="absorption_solvent")
+    if abs_smiles:
+        st.subheader("Structure Preview")
+        show_mol(abs_smiles, width=500, height=350)
+        st.write("Molecule SMILES:", abs_smiles)
+
     if abs_smiles and solvent:
         if model_regression:
             desc_smiles = smiles_to_descriptors(abs_smiles)
@@ -267,7 +288,6 @@ with tab2:
                 features = pd.concat([desc_smiles, desc_solvent], axis=1)
                 with st.spinner("Predicting absorption maximum..."):
                     prediction = predict(model_regression, features)
-                st.write("Molecule SMILES:", abs_smiles)
                 if prediction is not None:
                     try:
                         st.write(f"**Predicted Absorption Max:** {float(prediction):.2f} nm")
@@ -294,7 +314,11 @@ with tab3:
         if jsmi3:
             em_smiles = urllib.parse.unquote(jsmi3)
             st.success("Structure exported from JSME.")
-            st.write(f"**SMILES from drawing:** `{em_smiles}`")
+
+    if em_smiles:
+        st.subheader("Structure Preview")
+        show_mol(em_smiles, width=500, height=350)
+        st.write("Molecule SMILES:", em_smiles)
 
     solvent_em = st.text_input("Enter Solvent SMILES (e.g., 'O' for water):", key="emission_solvent")
     if em_smiles and solvent_em:
@@ -305,7 +329,6 @@ with tab3:
                 features = pd.concat([desc_smiles, desc_solvent], axis=1)
                 with st.spinner("Predicting emission maximum..."):
                     prediction = predict(model_emission, features)
-                st.write("Molecule SMILES:", em_smiles)
                 if prediction is not None:
                     try:
                         st.write(f"**Predicted Emission Max:** {float(prediction):.2f} nm")
@@ -319,7 +342,7 @@ with tab3:
 # ---------- TAB 4: FRET ----------
 with tab4:
     st.markdown("## 🔬 FRET Pair Analysis")
-    st.markdown("Provide **Donor** or **Acceptor** molecule for FRET compatibility and dataset-based spectral overlap search.")
+    st.markdown("Provide Donor or Acceptor molecule for FRET compatibility and dataset-based spectral overlap search.")
 
     colD, colA = st.columns(2)
 
@@ -339,7 +362,6 @@ with tab4:
             if jsmi_d:
                 donor_smiles = urllib.parse.unquote(jsmi_d)
                 st.success("Structure exported from JSME.")
-                st.write(f"**Donor SMILES:** `{donor_smiles}`")
 
     # Acceptor input
     with colA:
@@ -357,9 +379,18 @@ with tab4:
             if jsmi_a:
                 acceptor_smiles = urllib.parse.unquote(jsmi_a)
                 st.success("Structure exported from JSME.")
-                st.write(f"**Acceptor SMILES:** `{acceptor_smiles}`")
 
-    # FRET analysis (display donor absorption + existing Δ logic kept)
+    # Preview any provided SMILES
+    if donor_smiles:
+        st.write("Donor structure preview:")
+        show_mol(donor_smiles, width=420, height=300)
+        st.write("Donor SMILES:", donor_smiles)
+    if acceptor_smiles:
+        st.write("Acceptor structure preview:")
+        show_mol(acceptor_smiles, width=420, height=300)
+        st.write("Acceptor SMILES:", acceptor_smiles)
+
+    # FRET analysis (display donor absorption + existing Δ logic)
     if donor_smiles or acceptor_smiles:
         if model_emission is None or model_regression is None:
             st.error("Required models (emission or absorption) not loaded. Cannot perform FRET analysis.")
@@ -386,22 +417,22 @@ with tab4:
                         st.write("### 🔷 Donor Predicted Properties")
                         if donor_abs is not None:
                             try:
-                                st.write(f"**Predicted Donor Absorption Max:** {float(donor_abs):.2f} nm")
+                                st.write(f"Predicted Donor Absorption Max: {float(donor_abs):.2f} nm")
                             except Exception:
-                                st.write(f"**Predicted Donor Absorption Max:** {donor_abs}")
+                                st.write(f"Predicted Donor Absorption Max: {donor_abs}")
                         else:
                             st.info("Donor absorption prediction unavailable.")
 
                         try:
-                            st.write(f"**Predicted Donor Emission Max:** {float(query_em):.2f} nm")
+                            st.write(f"Predicted Donor Emission Max: {float(query_em):.2f} nm")
                         except Exception:
-                            st.write(f"**Predicted Donor Emission Max:** {query_em}")
+                            st.write(f"Predicted Donor Emission Max: {query_em}")
                     else:
                         query_abs = predict(model_regression, features)
                         try:
-                            st.write(f"**Predicted Acceptor Absorption Max:** {float(query_abs):.2f} nm")
+                            st.write(f"Predicted Acceptor Absorption Max: {float(query_abs):.2f} nm")
                         except Exception:
-                            st.write(f"**Predicted Acceptor Absorption Max:** {query_abs}")
+                            st.write(f"Predicted Acceptor Absorption Max: {query_abs}")
 
                 # ---- Dataset-based FRET Partner Search ----
                 st.markdown("### 🔍 Searching for best matching FRET partners...")
@@ -412,7 +443,7 @@ with tab4:
                     df_fluoro = df_fluoro[df_fluoro['Smiles'] != query_smiles]
 
                     if is_donor:
-                        # Δ remains |Acceptor Absorption - Donor Emission| (display only donor absorption)
+                        # Δ remains |Acceptor Absorption - Donor Emission|
                         df_fluoro['Δ (nm)'] = (df_fluoro['AbsorptioMax (nm)'] - query_em).abs()
                         top_candidates = df_fluoro.sort_values('Δ (nm)').head(5)
                         top_candidates.rename(columns={
@@ -443,7 +474,6 @@ with tab4:
                             acceptor_abs = float(row["Absorption (nm)"])
                             wavelength = np.linspace(300, 800, 1000)
                             if donor_em_val is None:
-                                # skip plotting if donor_em not numeric
                                 continue
                             donor_curve = np.exp(-0.5 * ((wavelength - donor_em_val) / 20) ** 2)
                             acceptor_curve = np.exp(-0.5 * ((wavelength - acceptor_abs) / 25) ** 2)
