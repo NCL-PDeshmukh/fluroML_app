@@ -1,0 +1,14 @@
+numpy==1.23.5
+pandas==1.5.3
+joblib==1.2.0
+pillow==9.5.0
+matplotlib==3.7.1
+rdkit-pypi==2023.3.1
+
+# DeepChem installs wrong sklearn
+deepchem==2.8.0
+
+# FORCE correct version after DeepChem
+scikit-learn==1.1.2
+
+streamlit==1.27.0
