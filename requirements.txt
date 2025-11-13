@@ -13,4 +13,4 @@ deepchem==2.8.0
 # Force correct sklearn version for your joblib models
 scikit-learn==1.1.2
 
-streamlit==1.27.0
+streamlit==1.27.0 
