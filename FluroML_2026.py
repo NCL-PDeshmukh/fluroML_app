@@ -1,31 +1,88 @@
+# fluroml_jsme_with_donor_absorption.py
 import streamlit as st
 from rdkit import Chem
-# NOTE: avoid "from rdkit.Chem import Draw" — it often triggers libXrender import errors on minimal containers.
 import joblib
 import pandas as pd
 import deepchem as dc
+import streamlit.components.v1 as components
+import urllib.parse
+import numpy as np
+import matplotlib.pyplot as plt
 
-# Try to import rdMolDraw2D (Cairo backend). If unavailable, fall back gracefully.
-try:
-    # rdMolDraw2D is the module that contains MolDraw2DCairo
-    from rdkit.Chem.Draw import rdMolDraw2D
-    _RD_MOL_DRAW_AVAILABLE = True
-except Exception as e:
-    rdMolDraw2D = None
-    _RD_MOL_DRAW_AVAILABLE = False
-    # Do not call st.* at import time; just keep the flag. We'll show user-visible warnings later when rendering.
+# --- JSME Editor helper (Full/default toolbar) ---
+def jsme_editor(key: str, width: int = 520, height: int = 360, initial_smiles: str = "") -> str:
+    """
+    Render a JSME editor with the default (full) toolbar.
+    On clicking 'Export SMILES' the page will reload with a query param:
+       ?jsme_<key>=<URL-encoded smiles>
+    This function returns the SMILES string found in the query param (if any).
+    """
+    param_name = f"jsme_{key}"
+    query_params = st.experimental_get_query_params()
+    # If there's a SMILES present in query params for this editor, return it
+    if param_name in query_params:
+        smiles_val = query_params[param_name][0]
+        return smiles_val
 
-# Try to import streamlit_ketcher for drawing, provide fallback if unavailable
-try:
-    from streamlit_ketcher import st_ketcher
-except ImportError:
-    def st_ketcher(*args, **kwargs):
-        st.warning("streamlit-ketcher is not installed. Please install it to draw molecules.")
-        return ""
+    # Otherwise render the editor HTML (which will allow user to export SMILES)
+    jsme_js_url = "https://jsme-editor.github.io/dist/jsme.nocache.js"
+    # ensure initial_smiles is properly encoded for use in JS
+    initial_enc = urllib.parse.quote(initial_smiles or "")
+    html = f"""
+    <div id="jsme_container_{key}" style="border:1px solid #ddd; width:{width}px; height:{height}px;"></div>
+    <div style="margin-top:6px;">
+      <button id="export_{key}" style="margin-right:8px;">Export SMILES</button>
+      <button id="clear_{key}">Clear Editor</button>
+      <span style="margin-left:10px;color:#555;font-size:0.9rem;">(Use Export to send SMILES back to the app)</span>
+    </div>
 
-# Streamlit app configuration
+    <script src="{jsme_js_url}"></script>
+    <script>
+      (function() {{
+        function initJSME() {{
+          try {{
+            var jsme = new JSApplet.JSME("jsme_container_{key}", "{width-20}px", "{height-70}px");
+            var initial = "{initial_enc}";
+            if (initial && initial.length > 0) {{
+              try {{ jsme.setSmiles(decodeURIComponent(initial)); }} catch(e){{}}
+            }}
+
+            document.getElementById("export_{key}").onclick = function() {{
+              try {{
+                var smi = jsme.smiles();
+                if(!smi) {{
+                  alert("No structure in the editor to export.");
+                  return;
+                }}
+                var enc = encodeURIComponent(smi);
+                var url = new URL(window.location.href);
+                url.searchParams.set("jsme_{key}", enc);
+                window.location.href = url.toString();
+              }} catch (err) {{
+                alert("Failed to export SMILES: " + err);
+              }}
+            }};
+
+            document.getElementById("clear_{key}").onclick = function() {{
+              try {{
+                jsme.setSmiles("");
+              }} catch(e){{ console.log(e); }}
+            }};
+          }} catch (e) {{
+            setTimeout(initJSME, 200);
+          }}
+        }}
+        initJSME();
+      }})();
+    </script>
+    """
+    components.html(html, height=height + 80)
+    return ""  # empty until exported (page reload will provide smi in next run)
+
+
+# --- Streamlit App configuration ---
 st.set_page_config(
-    page_title="FluroML - Molecular Prediction",
+    page_title="FluroML - Molecular Prediction (JSME)",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -41,7 +98,7 @@ def load_model(path: str):
         return None
 
 model_fluorescence = load_model("best_classifier_compatible.joblib")
-model_regression   = load_model("new_best_regressor_compatible.joblib")
+model_regression   = load_model("new_best_regressor_compatible.joblib")  # absorption model
 model_emission     = load_model("best_regressor_emission_compatible.joblib")
 
 # Helper functions
@@ -71,41 +128,14 @@ def smiles_to_descriptors(smiles: str):
     except Exception as fe:
         st.error(f"Failed to compute descriptors: {fe}")
         return None
-    # Wrap in DataFrame for easy concatenation
     return pd.DataFrame(features)
-
-def draw_molecule_png_bytes(smiles: str, size=(300, 300)):
-    """
-    Return PNG bytes image of the molecule using MolDraw2DCairo if available.
-    If not available, return None.
-    """
-    mol = Chem.MolFromSmiles(smiles)
-    if mol is None:
-        return None
-
-    if not _RD_MOL_DRAW_AVAILABLE:
-        # Drawing backend not available in this environment
-        return None
-
-    try:
-        width, height = size
-        drawer = rdMolDraw2D.MolDraw2DCairo(width, height)
-        # Prepare and draw molecule. Use default options.
-        rdMolDraw2D.PrepareAndDrawMolecule(drawer, mol)
-        drawer.FinishDrawing()
-        png_bytes = drawer.GetDrawingText()  # bytes (PNG)
-        return png_bytes
-    except Exception:
-        # if anything fails, return None (fall back gracefully)
-        return None
 
 def predict(model, features):
     """Make a prediction using a trained model and feature vector."""
     if model is None:
         return None
-    import numpy as np
-    # Convert features to numpy array and ensure 2D shape
-    X = features.values if isinstance(features, pd.DataFrame) else np.array(features)
+    import numpy as _np
+    X = features.values if isinstance(features, pd.DataFrame) else _np.array(features)
     if X.ndim == 1:
         X = X.reshape(1, -1)
     try:
@@ -113,7 +143,6 @@ def predict(model, features):
     except Exception as pe:
         st.error(f"Prediction failed: {pe}")
         return None
-    # If the result is an array or list, return the first element
     return pred[0] if hasattr(pred, "__len__") and not isinstance(pred, str) else pred
 
 def read_molecule_file(uploaded_file):
@@ -126,7 +155,6 @@ def read_molecule_file(uploaded_file):
         if not lines:
             st.error("SMI file is empty or invalid.")
             return None
-        # Each non-empty line: first token is SMILES
         smiles = lines[0].split()[0]
         if len(lines) > 1:
             st.info("Multiple SMILES in file; using the first entry.")
@@ -140,7 +168,6 @@ def read_molecule_file(uploaded_file):
         return Chem.MolToSmiles(mol)
     elif filename.lower().endswith('.sdf'):
         content = data.decode('utf-8', errors='ignore')
-        # SDF may contain multiple molecules separated by $$$$
         entries = [entry for entry in content.split('$$$$') if entry.strip()]
         if len(entries) == 0:
             st.error("No molecules found in SDF file.")
@@ -165,15 +192,11 @@ def load_dataset():
         st.error(f"Error loading dataset: {e}")
         return None
 
-# Show a small notice about drawing availability
-if not _RD_MOL_DRAW_AVAILABLE:
-    st.info(
-        "Note: RDKit drawing backend (rdMolDraw2D) is not available in this environment. "
-        "Molecule images will be disabled. Predictions and dataset functions still work."
-    )
+# Notify user about drawing method
+st.info("This app uses the JSME 2D editor for structure drawing. Use 'Export SMILES' to send the structure to the app.")
 
-# Set up the app layout with tabs
-st.title("FluroML: Molecular Fluorescence Predictor")
+# App layout
+st.title("FluroML: Molecular Fluorescence Predictor (JSME Editor)")
 tab1, tab2, tab3, tab4 = st.tabs([
     "Fluorescence Classification",
     "Absorption Max Prediction",
@@ -181,10 +204,10 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "FRET Analysis"
 ])
 
-# Tab 1: Fluorescence Classification
+# ---------- TAB 1 ----------
 with tab1:
     st.markdown("## 🧪 Fluorescence Classification")
-    input_method = st.radio("Input Method:", ("SMILES Input", "Draw Molecule", "Upload File"), key="fluoro_method")
+    input_method = st.radio("Input Method:", ("SMILES Input", "Draw Molecule (JSME)", "Upload File"), key="fluoro_method")
     smiles = ""
     if input_method == "SMILES Input":
         smiles = st.text_input("Enter a SMILES string:", key="fluorescence_smiles")
@@ -192,22 +215,20 @@ with tab1:
         file = st.file_uploader("Upload a molecule file (.smi, .mol, .sdf):", type=["smi", "mol", "sdf"], key="fluoro_file")
         if file:
             smiles = read_molecule_file(file) or ""
-    else:  # Draw Molecule
-        smiles = st_ketcher("")  # open the drawing widget
-        if smiles:
-            st.write(f"**SMILES from drawing:** {smiles}")
+    else:  # Draw Molecule with JSME
+        jsmi = jsme_editor("fluoro", width=520, height=360, initial_smiles="")
+        if jsmi:
+            smiles = urllib.parse.unquote(jsmi)
+            st.success("Structure exported from JSME.")
+            st.write(f"**SMILES from drawing:** `{smiles}`")
+
     if smiles:
         if model_fluorescence:
             features = smiles_to_morgan(smiles)
             if features is not None:
                 with st.spinner("Predicting fluorescence..."):
                     prediction = predict(model_fluorescence, features)
-                # Attempt to draw molecule (Cairo). If unavailable, show text-only fallback.
-                img_bytes = draw_molecule_png_bytes(smiles, size=(300, 300))
-                if img_bytes:
-                    st.image(img_bytes, caption="Molecule Structure")
-                else:
-                    st.info("Molecule image not available in this environment.")
+                st.write("Molecule SMILES:", smiles)
                 if prediction is None:
                     st.error("Prediction could not be made.")
                 else:
@@ -219,10 +240,10 @@ with tab1:
         else:
             st.error("Fluorescence classification model is not loaded.")
 
-# Tab 2: Absorption Max Prediction
+# ---------- TAB 2 ----------
 with tab2:
     st.markdown("## 🌈 Absorption Max Prediction")
-    input_method2 = st.radio("Input Method:", ("SMILES Input", "Draw Molecule", "Upload File"), key="abs_method")
+    input_method2 = st.radio("Input Method:", ("SMILES Input", "Draw Molecule (JSME)", "Upload File"), key="abs_method")
     abs_smiles = ""
     if input_method2 == "SMILES Input":
         abs_smiles = st.text_input("Enter Molecule SMILES:", key="absorption_smiles")
@@ -230,10 +251,13 @@ with tab2:
         file2 = st.file_uploader("Upload a molecule file (.smi, .mol, .sdf):", type=["smi", "mol", "sdf"], key="abs_file")
         if file2:
             abs_smiles = read_molecule_file(file2) or ""
-    else:  # Draw Molecule
-        abs_smiles = st_ketcher("")
-        if abs_smiles:
-            st.write(f"**SMILES from drawing:** {abs_smiles}")
+    else:
+        jsmi2 = jsme_editor("abs", width=520, height=360, initial_smiles="")
+        if jsmi2:
+            abs_smiles = urllib.parse.unquote(jsmi2)
+            st.success("Structure exported from JSME.")
+            st.write(f"**SMILES from drawing:** `{abs_smiles}`")
+
     solvent = st.text_input("Enter Solvent SMILES (e.g., 'O' for water):", key="absorption_solvent")
     if abs_smiles and solvent:
         if model_regression:
@@ -243,11 +267,7 @@ with tab2:
                 features = pd.concat([desc_smiles, desc_solvent], axis=1)
                 with st.spinner("Predicting absorption maximum..."):
                     prediction = predict(model_regression, features)
-                img_bytes = draw_molecule_png_bytes(abs_smiles, size=(300,300))
-                if img_bytes:
-                    st.image(img_bytes, caption="Molecule Structure")
-                else:
-                    st.info("Molecule image not available in this environment.")
+                st.write("Molecule SMILES:", abs_smiles)
                 if prediction is not None:
                     try:
                         st.write(f"**Predicted Absorption Max:** {float(prediction):.2f} nm")
@@ -258,10 +278,10 @@ with tab2:
         else:
             st.error("Absorption prediction model is not loaded.")
 
-# Tab 3: Emission Max Prediction
+# ---------- TAB 3 ----------
 with tab3:
     st.markdown("## 🔦 Emission Max Prediction")
-    input_method3 = st.radio("Input Method:", ("SMILES Input", "Draw Molecule", "Upload File"), key="em_method")
+    input_method3 = st.radio("Input Method:", ("SMILES Input", "Draw Molecule (JSME)", "Upload File"), key="em_method")
     em_smiles = ""
     if input_method3 == "SMILES Input":
         em_smiles = st.text_input("Enter Molecule SMILES:", key="emission_smiles")
@@ -270,9 +290,12 @@ with tab3:
         if file3:
             em_smiles = read_molecule_file(file3) or ""
     else:
-        em_smiles = st_ketcher("")
-        if em_smiles:
-            st.write(f"**SMILES from drawing:** {em_smiles}")
+        jsmi3 = jsme_editor("em", width=520, height=360, initial_smiles="")
+        if jsmi3:
+            em_smiles = urllib.parse.unquote(jsmi3)
+            st.success("Structure exported from JSME.")
+            st.write(f"**SMILES from drawing:** `{em_smiles}`")
+
     solvent_em = st.text_input("Enter Solvent SMILES (e.g., 'O' for water):", key="emission_solvent")
     if em_smiles and solvent_em:
         if model_emission:
@@ -282,11 +305,7 @@ with tab3:
                 features = pd.concat([desc_smiles, desc_solvent], axis=1)
                 with st.spinner("Predicting emission maximum..."):
                     prediction = predict(model_emission, features)
-                img_bytes = draw_molecule_png_bytes(em_smiles, size=(300,300))
-                if img_bytes:
-                    st.image(img_bytes, caption="Molecule Structure")
-                else:
-                    st.info("Molecule image not available in this environment.")
+                st.write("Molecule SMILES:", em_smiles)
                 if prediction is not None:
                     try:
                         st.write(f"**Predicted Emission Max:** {float(prediction):.2f} nm")
@@ -297,22 +316,17 @@ with tab3:
         else:
             st.error("Emission prediction model is not loaded.")
 
-# ======================================
-# 🔬 TAB 4: FRET Pair Analysis (Updated)
-# ======================================
-import numpy as np
-import matplotlib.pyplot as plt
-
+# ---------- TAB 4: FRET ----------
 with tab4:
     st.markdown("## 🔬 FRET Pair Analysis")
     st.markdown("Provide **Donor** or **Acceptor** molecule for FRET compatibility and dataset-based spectral overlap search.")
 
     colD, colA = st.columns(2)
 
-    # ----- Donor Input -----
+    # Donor input
     with colD:
         st.subheader("Donor Molecule")
-        donor_method = st.radio("Input Method:", ("SMILES Input", "Draw Molecule", "Upload File"), key="fret_donor_method")
+        donor_method = st.radio("Input Method:", ("SMILES Input", "Draw Molecule (JSME)", "Upload File"), key="fret_donor_method")
         donor_smiles = ""
         if donor_method == "SMILES Input":
             donor_smiles = st.text_input("Enter Donor SMILES:", key="fret_donor_smiles")
@@ -321,14 +335,16 @@ with tab4:
             if donor_file:
                 donor_smiles = read_molecule_file(donor_file) or ""
         else:
-            donor_smiles = st_ketcher("")
-            if donor_smiles:
-                st.write(f"**Donor SMILES:** {donor_smiles}")
+            jsmi_d = jsme_editor("fret_donor", width=480, height=320, initial_smiles="")
+            if jsmi_d:
+                donor_smiles = urllib.parse.unquote(jsmi_d)
+                st.success("Structure exported from JSME.")
+                st.write(f"**Donor SMILES:** `{donor_smiles}`")
 
-    # ----- Acceptor Input -----
+    # Acceptor input
     with colA:
         st.subheader("Acceptor Molecule")
-        acceptor_method = st.radio("Input Method:", ("SMILES Input", "Draw Molecule", "Upload File"), key="fret_acceptor_method")
+        acceptor_method = st.radio("Input Method:", ("SMILES Input", "Draw Molecule (JSME)", "Upload File"), key="fret_acceptor_method")
         acceptor_smiles = ""
         if acceptor_method == "SMILES Input":
             acceptor_smiles = st.text_input("Enter Acceptor SMILES:", key="fret_acceptor_smiles")
@@ -337,16 +353,17 @@ with tab4:
             if acceptor_file:
                 acceptor_smiles = read_molecule_file(acceptor_file) or ""
         else:
-            acceptor_smiles = st_ketcher("")
-            if acceptor_smiles:
-                st.write(f"**Acceptor SMILES:** {acceptor_smiles}")
+            jsmi_a = jsme_editor("fret_acceptor", width=480, height=320, initial_smiles="")
+            if jsmi_a:
+                acceptor_smiles = urllib.parse.unquote(jsmi_a)
+                st.success("Structure exported from JSME.")
+                st.write(f"**Acceptor SMILES:** `{acceptor_smiles}`")
 
-    # ----- Single Molecule FRET Match Mode -----
+    # FRET analysis (display donor absorption + existing Δ logic kept)
     if donor_smiles or acceptor_smiles:
         if model_emission is None or model_regression is None:
             st.error("Required models (emission or absorption) not loaded. Cannot perform FRET analysis.")
         else:
-            # Determine if Donor or Acceptor mode
             is_donor = bool(donor_smiles)
             query_smiles = donor_smiles if is_donor else acceptor_smiles
             st.markdown(f"### 🔹 Mode: {'Donor → Find Acceptors' if is_donor else 'Acceptor → Find Donors'}")
@@ -358,23 +375,29 @@ with tab4:
                 with st.spinner("Predicting spectral property..."):
                     features = pd.concat([desc, solvent_desc], axis=1)
                     if is_donor:
+                        # Predict donor emission
                         query_em = predict(model_emission, features)
-                        img_bytes = draw_molecule_png_bytes(query_smiles, size=(300,300))
-                        if img_bytes:
-                            st.image(img_bytes, caption="Donor Molecule")
+                        # Predict donor absorption (display only)
+                        try:
+                            donor_abs = predict(model_regression, features)
+                        except Exception:
+                            donor_abs = None
+
+                        st.write("### 🔷 Donor Predicted Properties")
+                        if donor_abs is not None:
+                            try:
+                                st.write(f"**Predicted Donor Absorption Max:** {float(donor_abs):.2f} nm")
+                            except Exception:
+                                st.write(f"**Predicted Donor Absorption Max:** {donor_abs}")
                         else:
-                            st.info("Molecule image not available in this environment.")
+                            st.info("Donor absorption prediction unavailable.")
+
                         try:
                             st.write(f"**Predicted Donor Emission Max:** {float(query_em):.2f} nm")
                         except Exception:
                             st.write(f"**Predicted Donor Emission Max:** {query_em}")
                     else:
                         query_abs = predict(model_regression, features)
-                        img_bytes = draw_molecule_png_bytes(query_smiles, size=(300,300))
-                        if img_bytes:
-                            st.image(img_bytes, caption="Acceptor Molecule")
-                        else:
-                            st.info("Molecule image not available in this environment.")
                         try:
                             st.write(f"**Predicted Acceptor Absorption Max:** {float(query_abs):.2f} nm")
                         except Exception:
@@ -389,6 +412,7 @@ with tab4:
                     df_fluoro = df_fluoro[df_fluoro['Smiles'] != query_smiles]
 
                     if is_donor:
+                        # Δ remains |Acceptor Absorption - Donor Emission| (display only donor absorption)
                         df_fluoro['Δ (nm)'] = (df_fluoro['AbsorptioMax (nm)'] - query_em).abs()
                         top_candidates = df_fluoro.sort_values('Δ (nm)').head(5)
                         top_candidates.rename(columns={
@@ -409,13 +433,19 @@ with tab4:
 
                     st.table(top_candidates.reset_index(drop=True))
 
-                    # Optional visualization
+                    # Optional visualization: overlap plots (unchanged)
                     if is_donor:
-                        donor_em = query_em
+                        try:
+                            donor_em_val = float(query_em)
+                        except Exception:
+                            donor_em_val = None
                         for idx, row in top_candidates.iterrows():
-                            acceptor_abs = row["Absorption (nm)"]
+                            acceptor_abs = float(row["Absorption (nm)"])
                             wavelength = np.linspace(300, 800, 1000)
-                            donor_curve = np.exp(-0.5 * ((wavelength - donor_em) / 20) ** 2)
+                            if donor_em_val is None:
+                                # skip plotting if donor_em not numeric
+                                continue
+                            donor_curve = np.exp(-0.5 * ((wavelength - donor_em_val) / 20) ** 2)
                             acceptor_curve = np.exp(-0.5 * ((wavelength - acceptor_abs) / 25) ** 2)
                             overlap_area = np.trapz(np.minimum(donor_curve, acceptor_curve), wavelength)
                             overlap_pct = overlap_area / np.trapz(donor_curve, wavelength) * 100
@@ -425,16 +455,16 @@ with tab4:
                             ax.fill_between(wavelength, np.minimum(donor_curve, acceptor_curve), alpha=0.3)
                             ax.set_xlabel("Wavelength (nm)")
                             ax.set_ylabel("Intensity")
-                            ax.set_title(f"Overlap ≈ {overlap_pct:.1f}% | Δλ={abs(float(donor_em) - float(acceptor_abs)):.1f} nm")
+                            ax.set_title(f"Overlap ≈ {overlap_pct:.1f}% | Δλ={abs(donor_em_val - acceptor_abs):.1f} nm")
                             ax.legend()
                             st.pyplot(fig)
                     else:
-                        acceptor_abs = query_abs
+                        acceptor_abs_val = float(query_abs)
                         for idx, row in top_candidates.iterrows():
-                            donor_em = row["Emission (nm)"]
+                            donor_em = float(row["Emission (nm)"])
                             wavelength = np.linspace(300, 800, 1000)
                             donor_curve = np.exp(-0.5 * ((wavelength - donor_em) / 20) ** 2)
-                            acceptor_curve = np.exp(-0.5 * ((wavelength - acceptor_abs) / 25) ** 2)
+                            acceptor_curve = np.exp(-0.5 * ((wavelength - acceptor_abs_val) / 25) ** 2)
                             overlap_area = np.trapz(np.minimum(donor_curve, acceptor_curve), wavelength)
                             overlap_pct = overlap_area / np.trapz(donor_curve, wavelength) * 100
                             fig, ax = plt.subplots(figsize=(6, 3))
@@ -443,14 +473,13 @@ with tab4:
                             ax.fill_between(wavelength, np.minimum(donor_curve, acceptor_curve), alpha=0.3)
                             ax.set_xlabel("Wavelength (nm)")
                             ax.set_ylabel("Intensity")
-                            ax.set_title(f"Overlap ≈ {overlap_pct:.1f}% | Δλ={abs(float(donor_em) - float(acceptor_abs)):.1f} nm")
+                            ax.set_title(f"Overlap ≈ {overlap_pct:.1f}% | Δλ={abs(donor_em - acceptor_abs_val):.1f} nm")
                             ax.legend()
                             st.pyplot(fig)
                 else:
                     st.info("Dataset not available or missing necessary columns for FRET partner search.")
     else:
         st.warning("Please provide at least a Donor or an Acceptor molecule to begin FRET analysis.")
-
 
 # Footer
 st.write("---")
