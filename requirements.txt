@@ -2,15 +2,16 @@ numpy==1.23.5
 pandas==1.5.3
 joblib==1.2.0
 pillow==9.5.0
+matplotlib==3.7.1
 
-# DeepChem compatible versions
-deepchem==2.8.0
-
-# RDKit core only (safe on Streamlit Cloud)
+# RDKit (core-only build, NO X11 / NO Draw / compatible with Streamlit Cloud)
 rdkit-pypi==2023.3.1b1
 
-# scikit-learn version used for your joblib models
+# DeepChem (must install before sklearn)
+deepchem==2.8.0
+
+# Correct sklearn for loading your joblib models
 scikit-learn==1.1.2
 
-# Streamlit version supported by Cloud
+# Streamlit version stable with Cloud
 streamlit==1.27.0
