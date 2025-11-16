@@ -4,13 +4,14 @@ joblib==1.2.0
 pillow==9.5.0
 matplotlib==3.7.1
 
-# RDKit for Python 3.10 (Streamlit Cloud compatible)
+# RDKit core (no drawing backend needed)
 rdkit-pypi==2023.3.1b1
 
-# DeepChem (must be installed BEFORE scikit-learn)
+# IMPORTANT: install DeepChem before sklearn (dependency order)
 deepchem==2.8.0
 
-# Force correct sklearn version (matches your joblib models)
+# sklearn version matching your joblib models
 scikit-learn==1.1.2
 
+# Streamlit version that is cloud–stable
 streamlit==1.27.0
