@@ -26,8 +26,8 @@ from rdkit import Chem, RDLogger
 RDLogger.DisableLog('rdApp.*')
 
 # Streamlit page config
-st.set_page_config(page_title="FluroML: Molecular Fluorescence Predictor (RDKit.js)", layout="wide")
-st.title("FluroML: Molecular Fluorescence Predictor (RDKit.js)")
+st.set_page_config(page_title="FluroML: Molecular Fluorescence Predictor", layout="wide")
+st.title("FluroML: Molecular Fluorescence Predictor")
 
 # ---------------------------
 # Models (cached)
@@ -217,7 +217,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # ---------------------------
 with tab1:
     st.header("🧪 Fluorescence Classification")
-    input_method = st.radio("Input Method:", ("SMILES Input", "Draw (external)", "Upload File"), key="clf_method")
+    input_method = st.radio("Input Method:", ("SMILES Input", "Draw", "Upload File"), key="clf_method")
     smiles = ""
     if input_method == "SMILES Input":
         smiles = st.text_input("Enter SMILES:", key="clf_smi")
