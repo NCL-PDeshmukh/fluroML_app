@@ -1,17 +1,20 @@
+# Core scientific packages
 numpy==1.23.5
 pandas==1.5.3
 joblib==1.2.0
 pillow==9.5.0
+
+# Plotting (FRET overlap curves)
 matplotlib==3.7.1
 
-# RDKit core (no drawing backend needed)
+# RDKit core build that works on Streamlit Cloud (no drawing backends)
 rdkit-pypi==2023.3.1b1
 
-# IMPORTANT: install DeepChem before sklearn (dependency order)
+# DeepChem FIRST (uses sklearn but wrong version)
 deepchem==2.8.0
 
-# sklearn version matching your joblib models
+# Correct sklearn version for your saved joblib models
 scikit-learn==1.1.2
 
-# Streamlit version that is cloud–stable
+# Streamlit stable version supported by Cloud
 streamlit==1.27.0
