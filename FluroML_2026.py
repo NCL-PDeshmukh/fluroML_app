@@ -1,8 +1,10 @@
-# FluroML_2026_final.py
-# Final cloud-ready Streamlit app matched to your model feature shapes:
-# - Fluorescence model: Morgan FP (1024)
-# - Absorption model: Molecule MACCS (166) + Solvent MACCS (166) => 332
-# - Emission model: Molecule MACCS + Solvent MACCS => 332
+# FluroML_2026.py  — FINAL cloud-safe version
+# - RDKit used only for parsing & mol-block generation (no Draw import)
+# - Browser-side Kekule.js renders molblock reliably on Streamlit Cloud
+# - Feature shapes:
+#   Fluorescence -> Morgan (1024)
+#   Absorption  -> MACCS(mol)+MACCS(solvent) (332)
+#   Emission    -> MACCS(mol)+MACCS(solvent) (332)
 
 import streamlit as st
 import pandas as pd
@@ -19,13 +21,14 @@ import streamlit.components.v1 as components
 st.set_page_config(page_title="FluroML: Molecular Fluorescence Predictor", layout="wide")
 
 # -------------------------
-# Kekule-based 2D viewer (cloud-safe)
+# Kekule renderer using MOL block (works in Cloud)
 # -------------------------
-def show_mol_kekule(smiles: str, width=400, height=300):
-    """Render a 2D structure in the browser using Kekule.js (no Python drawing libs)."""
-    if not smiles:
+def show_mol_kekule_from_molblock(molblock: str, width=420, height=320):
+    """Render a molecule using Kekule.js by providing the MolBlock (not SMILES)."""
+    if not molblock:
         return
-    s_escaped = smiles.replace('"', '\\"').replace('\n', '')
+    # escape for JS string literal
+    s = molblock.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
     html = f"""
     <html>
       <head>
@@ -33,23 +36,40 @@ def show_mol_kekule(smiles: str, width=400, height=300):
         <link href="https://cdn.jsdelivr.net/npm/kekule@0.9.6/dist/themes/default/kekule.css" rel="stylesheet" />
       </head>
       <body>
-        <div id="molviewer" style="width:{width}px; height:{height}px; border: 1px solid #ddd;"></div>
+        <div id="viewer" style="width:{width}px; height:{height}px; border:1px solid #ddd;"></div>
         <script>
           (function(){{
             try {{
-              var chemObj = Kekule.IO.loadFormatData("{s_escaped}", "smi");
-              var viewer = new Kekule.ChemWidget.Viewer(document.getElementById('molviewer'));
+              var data = "{s}";
+              var chemObj = Kekule.IO.loadFormatData(data, 'mol');
+              var viewer = new Kekule.ChemWidget.Viewer(document.getElementById('viewer'));
               viewer.setChemObj(chemObj);
               viewer.setPredefinedSetting('moleculeView');
             }} catch(e) {{
-              document.getElementById('molviewer').innerText = "Failed to render structure.";
+              document.getElementById('viewer').innerText = "Failed to render structure.";
             }}
           }})();
         </script>
       </body>
     </html>
     """
-    components.html(html, height=height + 20)
+    components.html(html, height=height+20)
+
+def smiles_to_molblock(smiles: str):
+    """Return an RDKit molblock (string) from a SMILES (or None if invalid)."""
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+    try:
+        # compute 2D coords so molblock has coordinates
+        Chem.rdDepictor.Compute2DCoords(mol)
+    except Exception:
+        pass
+    try:
+        mb = Chem.MolToMolBlock(mol)
+        return mb
+    except Exception:
+        return None
 
 # -------------------------
 # JSME editor helper (export via query param)
@@ -101,11 +121,11 @@ def jsme_editor(key: str, width: int = 520, height: int = 360, initial_smiles: s
     return ""
 
 # -------------------------
-# Featurizers (DeepChem)
+# Featurizers
 # -------------------------
-# Morgan FP (size 1024)
+# Morgan fingerprint (1024) — for fluorescence model
 morgan_featurizer = dc.feat.CircularFingerprint(radius=3, size=1024)
-# MACCS keys (166)
+# MACCS keys (166) — for absorption/emission models (mol + solvent)
 maccs_featurizer = dc.feat.MACCSKeysFingerprint()
 
 def compute_morgan(smiles: str):
@@ -131,20 +151,18 @@ def compute_maccs(smiles: str):
         return None
 
 # -------------------------
-# Feature building for each model (match training)
+# Feature builders that MATCH your training:
+# - Fluorescence -> Morgan 1024
+# - Absorption  -> MACCS mol + MACCS solvent (332)
+# - Emission    -> MACCS mol + MACCS solvent (332)
 # -------------------------
 def features_for_fluorescence(smiles: str):
-    """Return shape (1,1024) numpy for fluorescence model (Morgan only)."""
     fp = compute_morgan(smiles)
     if fp is None:
         return None
     return fp.reshape(1, -1)
 
 def features_for_absorption_or_emission(smiles: str, solvent_smiles: str):
-    """
-    Return shape (1,332) numpy: concat(maccs_mol (166), maccs_solvent (166))
-    Matches Absorption & Emission model training (choice 3).
-    """
     mol_desc = compute_maccs(smiles)
     solv_desc = compute_maccs(solvent_smiles)
     if mol_desc is None or solv_desc is None:
@@ -152,7 +170,7 @@ def features_for_absorption_or_emission(smiles: str, solvent_smiles: str):
     return np.concatenate([mol_desc, solv_desc]).reshape(1, -1)
 
 # -------------------------
-# File reader helper
+# File reader
 # -------------------------
 def read_molecule_file(uploaded_file):
     name = uploaded_file.name.lower()
@@ -200,11 +218,11 @@ model_fluorescence = load_model("best_classifier_compatible.joblib")   # expects
 model_absorption = load_model("new_best_regressor_compatible.joblib")  # expects 332
 model_emission = load_model("best_regressor_emission_compatible.joblib")  # expects 332
 
-def predict_model(model, feature_vector):
-    if model is None or feature_vector is None:
+def predict_model(model, features):
+    if model is None or features is None:
         return None
     try:
-        return model.predict(feature_vector)[0]
+        return model.predict(features)[0]
     except Exception as e:
         st.error(f"Prediction error: {e}")
         return None
@@ -215,7 +233,8 @@ def predict_model(model, feature_vector):
 @st.cache_data
 def load_dataset():
     try:
-        return pd.read_csv("All Properties with Finguprints_3.csv")
+        df = pd.read_csv("All Properties with Finguprints_3.csv")
+        return df
     except Exception as e:
         st.warning(f"Could not load dataset: {e}")
         return None
@@ -223,7 +242,7 @@ def load_dataset():
 # -------------------------
 # App UI
 # -------------------------
-st.title("FluroML: Molecular Fluorescence Predictor (Final)")
+st.title("FluroML: Molecular Fluorescence Predictor (Final — Cloud Safe)")
 
 tab1, tab2, tab3, tab4 = st.tabs([
     "Fluorescence Classification",
@@ -233,63 +252,70 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 
 # -------------------------
-# TAB 1: Fluorescence Classification (Morgan 1024)
+# TAB 1: Fluorescence (Morgan 1024)
 # -------------------------
 with tab1:
     st.header("🧪 Fluorescence Classification")
-    method = st.radio("Input Method:", ["SMILES Input", "Draw Molecule (JSME)", "Upload File"], key="tab1_method")
+    method = st.radio("Input Method:", ["SMILES Input", "Draw Molecule (JSME)", "Upload File"], key="t1_method")
     smiles = ""
 
     if method == "SMILES Input":
-        smiles = st.text_input("Enter SMILES:", key="tab1_smiles")
+        smiles = st.text_input("Enter SMILES:", key="t1_smiles")
     elif method == "Upload File":
-        f = st.file_uploader("Upload molecule (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="tab1_upload")
+        f = st.file_uploader("Upload file (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="t1_file")
         if f:
             smiles = read_molecule_file(f)
     else:
-        js = jsme_editor("tab1_jsme", width=520, height=360)
+        js = jsme_editor("t1_jsme", width=520, height=360)
         if js:
             smiles = urllib.parse.unquote(js)
             st.success("Structure exported from JSME.")
 
     if smiles:
         st.subheader("Structure Preview")
-        show_mol_kekule = show_mol_kekule if 'show_mol_kekule' in globals() else show_mol_kekule  # safe reference
-        show_mol_kekule(smiles, width=400, height=300)
+        mb = smiles_to_molblock(smiles)
+        if mb:
+            show_mol_kekule_from_molblock(mb, width=420, height=320)
+        else:
+            st.error("Could not prepare molblock for rendering.")
 
         feats = features_for_fluorescence(smiles)
         if feats is not None:
             pred = predict_model(model_fluorescence, feats)
             if pred is None:
-                st.error("Prediction failed")
+                st.error("Prediction failed.")
             else:
                 st.success("Fluorescent" if int(pred) == 1 else "Non-Fluorescent")
-                st.write("Feature vector shape (used):", feats.shape)
+                st.write("Used feature shape (rows,cols):", feats.shape)
 
 # -------------------------
-# TAB 2: Absorption Max Prediction (MACCS mol + MACCS solvent => 332)
+# TAB 2: Absorption (MACCS mol + MACCS solvent = 332)
 # -------------------------
 with tab2:
     st.header("🌈 Absorption Max Prediction")
-    method = st.radio("Input Method:", ["SMILES Input", "Draw Molecule (JSME)", "Upload File"], key="tab2_method")
+    method = st.radio("Input Method:", ["SMILES Input", "Draw Molecule (JSME)", "Upload File"], key="t2_method")
     abs_smiles = ""
 
     if method == "SMILES Input":
-        abs_smiles = st.text_input("Molecule SMILES:", key="tab2_smiles")
+        abs_smiles = st.text_input("Molecule SMILES:", key="t2_smiles")
     elif method == "Upload File":
-        f = st.file_uploader("Upload molecule (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="tab2_upload")
+        f = st.file_uploader("Upload file (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="t2_file")
         if f:
             abs_smiles = read_molecule_file(f)
     else:
-        js = jsme_editor("tab2_jsme", width=520, height=360)
+        js = jsme_editor("t2_jsme", width=520, height=360)
         if js:
             abs_smiles = urllib.parse.unquote(js)
 
-    solvent = st.text_input("Solvent SMILES (e.g., O):", key="tab2_solvent")
+    solvent = st.text_input("Solvent SMILES (e.g., O):", key="t2_solvent")
 
     if abs_smiles:
         st.subheader("Structure Preview")
-        show_mol_kekule(abs_smiles, width=400, height=300)
+        mb = smiles_to_molblock(abs_smiles)
+        if mb:
+            show_mol_kekule_from_molblock(mb, width=420, height=320)
+        else:
+            st.error("Could not prepare molblock for rendering.")
 
     if abs_smiles and solvent:
         feats = features_for_absorption_or_emission(abs_smiles, solvent)
@@ -297,32 +323,36 @@ with tab2:
             pred = predict_model(model_absorption, feats)
             if pred is not None:
                 st.success(f"Predicted Absorption Max: {float(pred):.2f} nm")
-                st.write("Feature vector shape (used):", feats.shape)
+                st.write("Used feature shape (rows,cols):", feats.shape)
 
 # -------------------------
-# TAB 3: Emission Max Prediction (MACCS mol + MACCS solvent => 332)
+# TAB 3: Emission (MACCS mol + MACCS solvent = 332)
 # -------------------------
 with tab3:
     st.header("🔦 Emission Max Prediction")
-    method = st.radio("Input Method:", ["SMILES Input", "Draw Molecule (JSME)", "Upload File"], key="tab3_method")
+    method = st.radio("Input Method:", ["SMILES Input", "Draw Molecule (JSME)", "Upload File"], key="t3_method")
     em_smiles = ""
 
     if method == "SMILES Input":
-        em_smiles = st.text_input("Molecule SMILES:", key="tab3_smiles")
+        em_smiles = st.text_input("Molecule SMILES:", key="t3_smiles")
     elif method == "Upload File":
-        f = st.file_uploader("Upload file (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="tab3_upload")
+        f = st.file_uploader("Upload file (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="t3_file")
         if f:
             em_smiles = read_molecule_file(f)
     else:
-        js = jsme_editor("tab3_jsme", width=520, height=360)
+        js = jsme_editor("t3_jsme", width=520, height=360)
         if js:
             em_smiles = urllib.parse.unquote(js)
 
-    solvent_em = st.text_input("Solvent SMILES (e.g., O):", key="tab3_solvent")
+    solvent_em = st.text_input("Solvent SMILES (e.g., O):", key="t3_solvent")
 
     if em_smiles:
         st.subheader("Structure Preview")
-        show_mol_kekule(em_smiles, width=400, height=300)
+        mb = smiles_to_molblock(em_smiles)
+        if mb:
+            show_mol_kekule_from_molblock(mb, width=420, height=320)
+        else:
+            st.error("Could not prepare molblock for rendering.")
 
     if em_smiles and solvent_em:
         feats = features_for_absorption_or_emission(em_smiles, solvent_em)
@@ -330,7 +360,7 @@ with tab3:
             pred = predict_model(model_emission, feats)
             if pred is not None:
                 st.success(f"Predicted Emission Max: {float(pred):.2f} nm")
-                st.write("Feature vector shape (used):", feats.shape)
+                st.write("Used feature shape (rows,cols):", feats.shape)
 
 # -------------------------
 # TAB 4: FRET Analysis
@@ -344,40 +374,49 @@ with tab4:
 
     with colD:
         st.subheader("Donor")
-        dmethod = st.radio("Donor Input Method:", ["SMILES", "Draw (JSME)", "Upload"], key="tab4_donor_method")
+        dmethod = st.radio("Donor Input Method:", ["SMILES", "Draw (JSME)", "Upload"], key="t4_d_method")
         if dmethod == "SMILES":
-            donor_smiles = st.text_input("Donor SMILES:", key="tab4_donor_smi")
+            donor_smiles = st.text_input("Donor SMILES:", key="t4_d_smiles")
         elif dmethod == "Upload":
-            f = st.file_uploader("Upload donor (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="tab4_donor_up")
+            f = st.file_uploader("Upload donor (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="t4_d_file")
             if f:
                 donor_smiles = read_molecule_file(f)
         else:
-            js = jsme_editor("tab4_donor_jsme", width=480, height=320)
+            js = jsme_editor("t4_d_jsme", width=480, height=320)
             if js:
                 donor_smiles = urllib.parse.unquote(js)
 
     with colA:
         st.subheader("Acceptor")
-        amethod = st.radio("Acceptor Input Method:", ["SMILES", "Draw (JSME)", "Upload"], key="tab4_acceptor_method")
+        amethod = st.radio("Acceptor Input Method:", ["SMILES", "Draw (JSME)", "Upload"], key="t4_a_method")
         if amethod == "SMILES":
-            acceptor_smiles = st.text_input("Acceptor SMILES:", key="tab4_acceptor_smi")
+            acceptor_smiles = st.text_input("Acceptor SMILES:", key="t4_a_smiles")
         elif amethod == "Upload":
-            f = st.file_uploader("Upload acceptor (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="tab4_acceptor_up")
+            f = st.file_uploader("Upload acceptor (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="t4_a_file")
             if f:
                 acceptor_smiles = read_molecule_file(f)
         else:
-            js = jsme_editor("tab4_acceptor_jsme", width=480, height=320)
+            js = jsme_editor("t4_a_jsme", width=480, height=320)
             if js:
                 acceptor_smiles = urllib.parse.unquote(js)
 
     if donor_smiles:
         st.write("### Donor structure")
-        show_mol_kekule(donor_smiles, width=380, height=280)
+        mb = smiles_to_molblock(donor_smiles)
+        if mb:
+            show_mol_kekule_from_molblock(mb, width=380, height=280)
+        else:
+            st.error("Could not prepare donor molblock.")
+
     if acceptor_smiles:
         st.write("### Acceptor structure")
-        show_mol_kekule(acceptor_smiles, width=380, height=280)
+        mb = smiles_to_molblock(acceptor_smiles)
+        if mb:
+            show_mol_kekule_from_molblock(mb, width=380, height=280)
+        else:
+            st.error("Could not prepare acceptor molblock.")
 
-    # FRET dataset-based search
+    # FRET partner search (dataset)
     if donor_smiles or acceptor_smiles:
         df = load_dataset()
         if df is None:
