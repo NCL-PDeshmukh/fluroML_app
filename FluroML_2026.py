@@ -1,403 +1,390 @@
 import streamlit as st
-from rdkit import Chem
-import joblib
 import pandas as pd
-import deepchem as dc
-import streamlit.components.v1 as components
-import urllib.parse
 import numpy as np
-import matplotlib.pyplot as plt
+from rdkit import Chem
+from rdkit.Chem import Draw
+import joblib
+import deepchem as dc
+import urllib
+import streamlit.components.v1 as components
 
-# =====================================================================================
-# ✔ 2D Molecule Viewer (MolView – cloud safe)
-# =====================================================================================
-def show_mol(smiles: str, width=450, height=350):
-    """Display a 2D molecule using MolView iframe."""
-    if not smiles:
-        return
-    encoded = urllib.parse.quote(smiles)
-    html = f"""
-    <iframe 
-        src="https://molview.org/?smiles={encoded}"
-        width="{width}" 
-        height="{height}" 
-        style="border:0;">
-    </iframe>
-    """
-    components.html(html, height=height + 10)
-
-
-# =====================================================================================
-# ✔ JSME Editor (full default toolbar)
-# =====================================================================================
-def jsme_editor(key: str, width=520, height=360, initial_smiles: str = "") -> str:
-    param = f"jsme_{key}"
-    params = st.experimental_get_query_params()
-
-    if param in params:
-        return params[param][0]
-
-    jsme_js = "https://jsme-editor.github.io/dist/jsme.nocache.js"
-    init = urllib.parse.quote(initial_smiles or "")
-
-    html = f"""
-    <div id="jsme_container_{key}" style="border:1px solid #ddd; width:{width}px; height:{height}px;"></div>
-    <div style="margin-top:6px;">
-      <button id="exp_{key}" style="margin-right:8px;">Export SMILES</button>
-      <button id="clr_{key}">Clear</button>
-    </div>
-
-    <script src="{jsme_js}"></script>
-    <script>
-      function initJSME() {{
-        try {{
-          var jsme = new JSApplet.JSME("jsme_container_{key}", "{width-20}px", "{height-70}px");
-          if ("{init}") {{
-            try {{ jsme.setSmiles(decodeURIComponent("{init}")); }} catch(e){{}}
-          }}
-
-          document.getElementById("exp_{key}").onclick = function() {{
-            var s = jsme.smiles();
-            if(!s) {{ alert("Draw structure first"); return; }}
-            var enc = encodeURIComponent(s);
-            var u = new URL(window.location.href);
-            u.searchParams.set("{param}", enc);
-            window.location.href = u.toString();
-          }};
-
-          document.getElementById("clr_{key}").onclick = function() {{
-            jsme.setSmiles("");
-          }};
-        }} catch(e) {{
-          setTimeout(initJSME, 200);
-        }}
-      }}
-      initJSME();
-    </script>
-    """
-
-    components.html(html, height=height + 80)
-    return ""
-
-
-# =====================================================================================
-# ✔ Streamlit Page Config
-# =====================================================================================
+# -------------------------------------------------------
+# Page Setup
+# -------------------------------------------------------
 st.set_page_config(
     page_title="FluroML: Molecular Fluorescence Predictor",
     layout="wide",
 )
 
+# -------------------------------------------------------------------
+# SAFE 2D STRUCTURE RENDERING — RDKit SVG (WORKS ON STREAMLIT CLOUD)
+# -------------------------------------------------------------------
+def show_mol(smiles: str, width=450):
+    """Render a molecule using RDKit SVG (cloud-safe)."""
+    if not smiles:
+        return
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        st.error("Invalid SMILES.")
+        return
+    svg = Draw.MolToSVG(mol, size=(width, width))
+    svg_clean = svg.replace("<?xml version='1.0' encoding='UTF-8'?>", "")
+    st.write(svg_clean, unsafe_allow_html=True)
 
-# =====================================================================================
-# ✔ Load Models
-# =====================================================================================
+# -------------------------------------------------------
+# Enhanced molecular representation (Morgan + MACCS)
+# -------------------------------------------------------
+def smiles_to_features(smiles: str):
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        st.error("Invalid SMILES.")
+        return None
+
+    # Morgan fingerprint (1024 bits)
+    fp_featurizer = dc.feat.CircularFingerprint(radius=3, size=1024)
+    fp = fp_featurizer.featurize([mol])[0]
+
+    # MACCS (166 bits)
+    desc_featurizer = dc.feat.MACCSKeysFingerprint()
+    desc = desc_featurizer.featurize([mol])[0]
+
+    # Concatenate
+    features = np.concatenate([fp, desc])
+    return features  # shape = (1190,)
+
+# -------------------------------------------------------
+# Descriptor only (for solvent-based models)
+# -------------------------------------------------------
+def smiles_to_descriptors_df(smiles: str):
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+    featurizer = dc.feat.MACCSKeysFingerprint()
+    X = featurizer.featurize([mol])
+    return pd.DataFrame(X)
+
+# -------------------------------------------------------
+# File Reader
+# -------------------------------------------------------
+def read_molecule_file(uploaded_file):
+    name = uploaded_file.name.lower()
+    data = uploaded_file.getvalue().decode("utf-8", errors="ignore")
+
+    if name.endswith(".smi"):
+        smi = data.splitlines()[0].split()[0]
+        return smi
+
+    elif name.endswith(".mol"):
+        mol = Chem.MolFromMolBlock(data)
+        if mol:
+            return Chem.MolToSmiles(mol)
+
+    elif name.endswith(".sdf"):
+        blocks = data.split("$$$$")
+        mol = Chem.MolFromMolBlock(blocks[0])
+        if mol:
+            return Chem.MolToSmiles(mol)
+
+    st.error("Invalid molecule file.")
+    return None
+
+# -------------------------------------------------------
+# Load Models
+# -------------------------------------------------------
 @st.cache_resource
 def load_model(path):
     try:
         return joblib.load(path)
     except Exception as e:
-        st.error(f"Failed to load {path}: {e}")
+        st.error(f"Error loading {path}: {e}")
         return None
 
-model_fluor = load_model("best_classifier_compatible.joblib")
-model_abs   = load_model("new_best_regressor_compatible.joblib")
-model_em    = load_model("best_regressor_emission_compatible.joblib")
+model_fluoro = load_model("best_classifier_compatible.joblib")
+model_abs = load_model("new_best_regressor_compatible.joblib")
+model_em = load_model("best_regressor_emission_compatible.joblib")
 
-
-# =====================================================================================
-# ✔ Featurization
-# =====================================================================================
-def smiles_to_morgan(smi):
-    mol = Chem.MolFromSmiles(smi)
-    if mol is None:
-        st.error("Invalid SMILES.")
-        return None
-    return dc.feat.CircularFingerprint(radius=3, size=1024).featurize([mol])[0]
-
-
-def smiles_to_maccs(smi):
-    mol = Chem.MolFromSmiles(smi)
-    if mol is None:
-        st.error("Invalid SMILES.")
-        return None
-    arr = dc.feat.MACCSKeysFingerprint().featurize([mol])
-    return pd.DataFrame(arr)
-
-
-def predict(model, feat):
-    import numpy as np
+# -------------------------------------------------------
+# Prediction Helper
+# -------------------------------------------------------
+def predict(model, X):
     if model is None:
         return None
-    X = feat.values if isinstance(feat, pd.DataFrame) else np.array(feat)
-    if X.ndim == 1:
-        X = X.reshape(1, -1)
-    try:
-        out = model.predict(X)
-        return out[0]
-    except Exception as e:
-        st.error(f"Prediction error: {e}")
-        return None
+    if isinstance(X, pd.DataFrame):
+        X = X.values
+    X = np.array(X).reshape(1, -1)
+    return model.predict(X)[0]
 
-
-# =====================================================================================
-# ✔ File loader
-# =====================================================================================
-def read_molecule_file(f):
-    name = f.name.lower()
-    data = f.getvalue().decode("utf-8", errors="ignore")
-
-    if name.endswith(".smi"):
-        return data.splitlines()[0].split()[0]
-
-    if name.endswith(".mol") or name.endswith(".sdf"):
-        mol = Chem.MolFromMolBlock(data)
-        return Chem.MolToSmiles(mol) if mol else None
-
-    st.error("Unsupported format.")
-    return None
-
-
-# =====================================================================================
-# ✔ Dataset
-# =====================================================================================
+# -------------------------------------------------------
+# Load dataset for FRET
+# -------------------------------------------------------
 @st.cache_data
 def load_dataset():
     try:
         return pd.read_csv("All Properties with Finguprints_3.csv")
-    except Exception as e:
-        st.error(e)
+    except:
         return None
 
+# -------------------------------------------------------
+# App Title
+# -------------------------------------------------------
+st.title("FluroML: Molecular Fluorescence Predictor (2D Structures)")
 
-# =====================================================================================
-# APP TABS
-# =====================================================================================
-st.title("FluroML: Molecular Fluorescence Predictor (JSME + 2D Structures)")
-
-tab1, tab2, tab3, tab4 = st.tabs([
+tabs = st.tabs([
     "Fluorescence Classification",
     "Absorption Max Prediction",
     "Emission Max Prediction",
-    "FRET Analysis",
+    "FRET Analysis"
 ])
 
-
-# =====================================================================================
+# -------------------------------------------------------
 # TAB 1 — Fluorescence Classification
-# =====================================================================================
-with tab1:
+# -------------------------------------------------------
+with tabs[0]:
     st.header("🧪 Fluorescence Classification")
 
     method = st.radio("Input Method:", 
                       ["SMILES Input", "Draw Molecule (JSME)", "Upload File"],
-                      key="fluoro_method_radio")
+                      key="fluoro_input_method")
 
-    smi = ""
+    smiles = ""
 
     if method == "SMILES Input":
-        smi = st.text_input("Enter SMILES:", key="fluoro_smi_input")
+        smiles = st.text_input("Enter SMILES:", key="fluoro_smiles")
 
     elif method == "Upload File":
-        f = st.file_uploader("Upload molecule file", type=["smi", "mol", "sdf"], key="fluoro_upload")
-        if f:
-            smi = read_molecule_file(f)
+        file = st.file_uploader("Upload molecule file:", type=["smi","mol","sdf"], key="fluoro_file")
+        if file:
+            smiles = read_molecule_file(file)
 
     else:
-        js = jsme_editor("fluoro_js")
+        html = """
+        <script src="https://unpkg.com/jsme-editor"></script>
+        <div id="jsme" style="width:400px; height:350px;"></div>
+        <script>
+            var jsme = new JSApplet.JSME("jsme", "400px", "350px", {"options":"query"});
+            function sendSmiles(){
+                const value = jsme.smiles();
+                window.parent.postMessage({jsme_smiles:value}, "*");
+            }
+            setInterval(sendSmiles, 800);
+        </script>
+        """
+        components.html(html, height=380)
+        js = st._get_script_run_ctx().session_state.get("jsme_smiles", "")
         if js:
-            smi = urllib.parse.unquote(js)
-            st.success("Molecule exported.")
+            smiles = js
 
-    if smi:
+    if smiles:
         st.subheader("2D Structure")
-        show_mol(smi)
+        show_mol(smiles)
 
-        feat = smiles_to_morgan(smi)
-        if feat is not None:
-            pred = predict(model_fluor, feat)
-            if pred is not None:
-                st.success("Fluorescent" if int(pred) == 1 else "Non-Fluorescent")
+        X = smiles_to_features(smiles)
+        if X is not None:
+            pred = predict(model_fluoro, X)
+            if pred == 1:
+                st.success("Fluorescent")
+            else:
+                st.error("Non-Fluorescent")
 
-
-# =====================================================================================
-# TAB 2 — Absorption
-# =====================================================================================
-with tab2:
+# -------------------------------------------------------
+# TAB 2 — Absorption Max Prediction
+# -------------------------------------------------------
+with tabs[1]:
     st.header("🌈 Absorption Max Prediction")
 
     method = st.radio("Input Method:", 
                       ["SMILES Input", "Draw Molecule (JSME)", "Upload File"],
-                      key="abs_method_radio")
+                      key="abs_input_method")
 
-    smi = ""
+    abs_smiles = ""
 
     if method == "SMILES Input":
-        smi = st.text_input("Enter SMILES:", key="abs_smi_input")
+        abs_smiles = st.text_input("Enter molecule SMILES:", key="abs_smiles")
 
     elif method == "Upload File":
-        f = st.file_uploader("Upload molecule file", type=["smi", "mol", "sdf"], key="abs_upload")
-        if f:
-            smi = read_molecule_file(f)
+        file = st.file_uploader("Upload molecule:", type=["smi","mol","sdf"], key="abs_file")
+        if file:
+            abs_smiles = read_molecule_file(file)
 
     else:
-        js = jsme_editor("abs_js")
+        html = """
+        <script src="https://unpkg.com/jsme-editor"></script>
+        <div id="jsme_abs" style="width:400px; height:350px;"></div>
+        <script>
+            var jsme_abs = new JSApplet.JSME("jsme_abs", "400px", "350px", {"options":"query"});
+            function sendAbs(){
+                const value = jsme_abs.smiles();
+                window.parent.postMessage({abs_jsme_smiles:value}, "*");
+            }
+            setInterval(sendAbs, 800);
+        </script>
+        """
+        components.html(html, height=380)
+        js = st._get_script_run_ctx().session_state.get("abs_jsme_smiles", "")
         if js:
-            smi = urllib.parse.unquote(js)
+            abs_smiles = js
 
-    solvent = st.text_input("Solvent SMILES (e.g., O):", key="abs_solvent")
+    solvent = st.text_input("Solvent SMILES:", key="abs_solvent")
 
-    if smi:
+    if abs_smiles and solvent:
         st.subheader("2D Structure")
-        show_mol(smi)
+        show_mol(abs_smiles)
 
-    if smi and solvent:
-        m = smiles_to_maccs(smi)
-        s = smiles_to_maccs(solvent)
-        if m is not None and s is not None:
-            X = pd.concat([m, s], axis=1)
+        d1 = smiles_to_descriptors_df(abs_smiles)
+        d2 = smiles_to_descriptors_df(solvent)
+
+        if d1 is not None and d2 is not None:
+            X = pd.concat([d1, d2], axis=1)
             pred = predict(model_abs, X)
-            if pred is not None:
-                st.info(f"Predicted Absorption Max: **{float(pred):.2f} nm**")
+            st.success(f"Predicted Absorption Max: {pred:.2f} nm")
 
-
-# =====================================================================================
-# TAB 3 — Emission
-# =====================================================================================
-with tab3:
+# -------------------------------------------------------
+# TAB 3 — Emission Max Prediction
+# -------------------------------------------------------
+with tabs[2]:
     st.header("🔦 Emission Max Prediction")
 
-    method = st.radio("Input Method:",
+    method = st.radio("Input Method:", 
                       ["SMILES Input", "Draw Molecule (JSME)", "Upload File"],
-                      key="em_method_radio")
+                      key="em_input_method")
 
-    smi = ""
+    em_smiles = ""
 
     if method == "SMILES Input":
-        smi = st.text_input("Enter SMILES:", key="em_smi_input")
+        em_smiles = st.text_input("Enter SMILES:", key="em_smiles")
 
     elif method == "Upload File":
-        f = st.file_uploader("Upload molecule file", type=["smi", "mol", "sdf"], key="em_upload")
-        if f:
-            smi = read_molecule_file(f)
+        file = st.file_uploader("Upload file:", type=["smi","mol","sdf"], key="em_file")
+        if file:
+            em_smiles = read_molecule_file(file)
 
     else:
-        js = jsme_editor("em_js")
+        html = """
+        <script src="https://unpkg.com/jsme-editor"></script>
+        <div id="jsme_em" style="width:400px; height:350px;"></div>
+        <script>
+            var jsme_em = new JSApplet.JSME("jsme_em", "400px", "350px", {"options":"query"});
+            function sendEm(){
+                const value = jsme_em.smiles();
+                window.parent.postMessage({em_jsme_smiles:value}, "*");
+            }
+            setInterval(sendEm, 800);
+        </script>
+        """
+        components.html(html, height=380)
+        js = st._get_script_run_ctx().session_state.get("em_jsme_smiles", "")
         if js:
-            smi = urllib.parse.unquote(js)
+            em_smiles = js
 
-    solvent = st.text_input("Solvent SMILES (e.g., O):", key="em_solvent")
+    solvent_em = st.text_input("Solvent SMILES:", key="em_solvent")
 
-    if smi:
+    if em_smiles and solvent_em:
         st.subheader("2D Structure")
-        show_mol(smi)
+        show_mol(em_smiles)
 
-    if smi and solvent:
-        m = smiles_to_maccs(smi)
-        s = smiles_to_maccs(solvent)
-        if m is not None and s is not None:
-            X = pd.concat([m, s], axis=1)
+        d1 = smiles_to_descriptors_df(em_smiles)
+        d2 = smiles_to_descriptors_df(solvent_em)
+
+        if d1 is not None and d2 is not None:
+            X = pd.concat([d1, d2], axis=1)
             pred = predict(model_em, X)
-            if pred is not None:
-                st.info(f"Predicted Emission Max: **{float(pred):.2f} nm**")
+            st.success(f"Predicted Emission Max: {pred:.2f} nm")
 
-
-# =====================================================================================
+# -------------------------------------------------------
 # TAB 4 — FRET Analysis
-# =====================================================================================
-with tab4:
-    st.header("🔬 FRET Pair Analysis")
+# -------------------------------------------------------
+with tabs[3]:
+    st.header("🔬 FRET Analysis")
 
     col1, col2 = st.columns(2)
 
-    # ---------- Donor ----------
+    # -------- Donor -------
     with col1:
-        st.subheader("Donor")
-        m = st.radio("Donor Input:", 
-                     ["SMILES", "JSME", "Upload"], 
-                     key="donor_radio")
+        st.subheader("Donor Molecule")
+        method = st.radio("Input Method:", 
+                          ["SMILES", "Draw (JSME)", "Upload"], key="donor_method")
 
         donor = ""
-        if m == "SMILES":
+        if method == "SMILES":
             donor = st.text_input("Donor SMILES:", key="donor_smi")
-        elif m == "Upload":
-            f = st.file_uploader("Upload Donor", type=["smi", "mol", "sdf"], key="donor_up")
-            if f:
-                donor = read_molecule_file(f)
+        elif method == "Upload":
+            file = st.file_uploader("Upload Donor:", type=["smi","mol","sdf"], key="donor_file")
+            if file:
+                donor = read_molecule_file(file)
         else:
-            js = jsme_editor("donor_js")
+            html = """
+            <script src="https://unpkg.com/jsme-editor"></script>
+            <div id="jsme_d" style="width:400px; height:350px;"></div>
+            <script>
+                var jsme_d = new JSApplet.JSME("jsme_d", "400px", "350px", {"options":"query"});
+                function sendD(){window.parent.postMessage({don_jsme:jsme_d.smiles()}, "*");}
+                setInterval(sendD, 800);
+            </script>
+            """
+            components.html(html, height=380)
+            js = st._get_script_run_ctx().session_state.get("don_jsme", "")
             if js:
-                donor = urllib.parse.unquote(js)
+                donor = js
 
-    # ---------- Acceptor ----------
+    # -------- Acceptor -------
     with col2:
-        st.subheader("Acceptor")
-        m = st.radio("Acceptor Input:", 
-                     ["SMILES", "JSME", "Upload"],
-                     key="acceptor_radio")
+        st.subheader("Acceptor Molecule")
+        method = st.radio("Input Method:", 
+                          ["SMILES", "Draw (JSME)", "Upload"], key="acc_method")
 
         acceptor = ""
-        if m == "SMILES":
+        if method == "SMILES":
             acceptor = st.text_input("Acceptor SMILES:", key="acc_smi")
-        elif m == "Upload":
-            f = st.file_uploader("Upload Acceptor", type=["smi", "mol", "sdf"], key="acc_up")
-            if f:
-                acceptor = read_molecule_file(f)
+        elif method == "Upload":
+            file = st.file_uploader("Upload Acceptor:", type=["smi","mol","sdf"], key="acc_file")
+            if file:
+                acceptor = read_molecule_file(file)
         else:
-            js = jsme_editor("acc_js")
+            html = """
+            <script src="https://unpkg.com/jsme-editor"></script>
+            <div id="jsme_a" style="width:400px; height:350px;"></div>
+            <script>
+                var jsme_a = new JSApplet.JSME("jsme_a", "400px", "350px", {"options":"query"});
+                function sendA(){window.parent.postMessage({acc_jsme:jsme_a.smiles()}, "*");}
+                setInterval(sendA, 800);
+            </script>
+            """
+            components.html(html, height=380)
+            js = st._get_script_run_ctx().session_state.get("acc_jsme", "")
             if js:
-                acceptor = urllib.parse.unquote(js)
+                acceptor = js
 
-    # ---------- Show structures ----------
-    if donor:
-        st.write("### Donor Structure")
-        show_mol(donor)
-
-    if acceptor:
-        st.write("### Acceptor Structure")
-        show_mol(acceptor)
-
-    # ---------- FRET computation ----------
+    # ---------------- FRET logic -------------------
     if donor or acceptor:
-        df = load_dataset()
-        if df is None:
-            st.error("Dataset missing.")
-        else:
-            solvent = "O"
-            s = smiles_to_maccs(solvent)
+        st.subheader("2D Structures")
 
-            # donor mode
-            if donor:
-                d = smiles_to_maccs(donor)
-                if d is not None:
-                    X = pd.concat([d, s], axis=1)
-                    donor_em = predict(model_em, X)
-                    donor_abs = predict(model_abs, X)
+        if donor:
+            st.write("**Donor:**")
+            show_mol(donor)
 
-                    st.success(f"Donor Emission: {donor_em:.2f} nm")
-                    st.info(f"Donor Absorption: {donor_abs:.2f} nm")
+            # Predict donor emission + absorption
+            ds1 = smiles_to_descriptors_df(donor)
+            ds2 = smiles_to_descriptors_df("O")  # water
+            if ds1 is not None and ds2 is not None:
+                X = pd.concat([ds1, ds2], axis=1)
+                donor_em = predict(model_em, X)
+                donor_abs = predict(model_abs, X)
+                st.info(f"Donor Emission: {donor_em:.1f} nm")
+                st.info(f"Donor Absorption: {donor_abs:.1f} nm")
 
-                    df2 = df[df["Fluorescent labeling"].astype(str).str.lower().isin(["yes","true","1"])].copy()
-                    df2["Δ"] = abs(df2["AbsorptioMax (nm)"] - donor_em)
+        if acceptor:
+            st.write("**Acceptor:**")
+            show_mol(acceptor)
 
-                    st.subheader("Top 5 FRET Acceptors")
-                    st.table(df2.sort_values("Δ").head(5)[["Smiles", "AbsorptioMax (nm)", "EmissionMax (nm)", "Δ"]])
+            ds1 = smiles_to_descriptors_df(acceptor)
+            ds2 = smiles_to_descriptors_df("O")
+            if ds1 is not None and ds2 is not None:
+                X = pd.concat([ds1, ds2], axis=1)
+                acceptor_abs = predict(model_abs, X)
+                st.info(f"Acceptor Absorption: {acceptor_abs:.1f} nm")
 
-            # acceptor mode
-            if acceptor:
-                a = smiles_to_maccs(acceptor)
-                if a is not None:
-                    X = pd.concat([a, s], axis=1)
-                    acc_abs = predict(model_abs, X)
-
-                    st.success(f"Acceptor Absorption: {acc_abs:.2f} nm")
-
-                    df2 = df[df["Fluorescent labeling"].astype(str).str.lower().isin(["yes","true","1"])].copy()
-                    df2["Δ"] = abs(df2["EmissionMax (nm)"] - acc_abs)
-
-                    st.subheader("Top 5 FRET Donors")
-                    st.table(df2.sort_values("Δ").head(5)[["Smiles", "AbsorptioMax (nm)", "EmissionMax (nm)", "Δ"]])
-
+# -------------------------------------------------------
 # Footer
+# -------------------------------------------------------
 st.write("---")
 st.caption("FluroML © P. Deshmukh")
