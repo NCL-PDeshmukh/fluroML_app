@@ -293,78 +293,121 @@ with tab3:
             if pred is not None:
                 st.success(f"Predicted Emission Max: {pred:.2f} nm")
 
-# ======================================
-# 🔬 TAB 4 — FRET Pair Analysis (FAST & FIXED)
-# ======================================
+# ---------------------------
+# TAB 4 — FRET Pair Analysis (NO PLOTS, FAST MODE)
+# ---------------------------
+
 with tab4:
-    st.markdown("## 🔬 FRET Pair Analysis")
+    st.markdown("## 🔬 FRET Pair Analysis (Fast Mode)")
+    st.markdown("Provide **Donor** or **Acceptor** molecule to compute predicted spectral properties and find top 5 FRET partners.")
 
     colD, colA = st.columns(2)
 
-    # Donor Input
+    # -------------------------
+    # DONOR INPUT
+    # -------------------------
     with colD:
         st.subheader("Donor Molecule")
-        donor_method = st.radio("Input Method:", ("SMILES Input", "Draw (external)", "Upload File"), key="f_d_method")
+        donor_method = st.radio(
+            "Input Method:", 
+            ("SMILES Input", "Draw (external)", "Upload File"),
+            key="f_d_method"
+        )
         donor_smiles = ""
+
         if donor_method == "SMILES Input":
             donor_smiles = st.text_input("Enter Donor SMILES:", key="f_d_smi")
-        elif donor_method == "Upload File":
-            df_up = st.file_uploader("Upload Donor (.smi/.mol/.sdf)", type=["smi","mol","sdf"], key="f_d_file")
-            if df_up:
-                donor_smiles = read_molecule_file(df_up) or ""
-        else:
-            donor_smiles = st.text_input("Paste Donor SMILES from drawing tool:", key="f_d_draw")
 
-    # Acceptor Input
+        elif donor_method == "Upload File":
+            donor_file = st.file_uploader("Upload Donor (.smi/.mol/.sdf):",
+                                          type=["smi","mol","sdf"],
+                                          key="f_d_file")
+            if donor_file:
+                donor_smiles = read_molecule_file(donor_file) or ""
+
+        else:
+            st.info("Draw externally (JSME/Ketcher) and paste exported SMILES.")
+            donor_smiles = st.text_input("Paste Donor SMILES:", key="f_d_draw")
+
+    # -------------------------
+    # ACCEPTOR INPUT
+    # -------------------------
     with colA:
         st.subheader("Acceptor Molecule")
-        acc_method = st.radio("Input Method:", ("SMILES Input", "Draw (external)", "Upload File"), key="f_a_method")
+        acc_method = st.radio(
+            "Input Method:", 
+            ("SMILES Input", "Draw (external)", "Upload File"),
+            key="f_a_method"
+        )
         acceptor_smiles = ""
+
         if acc_method == "SMILES Input":
             acceptor_smiles = st.text_input("Enter Acceptor SMILES:", key="f_a_smi")
-        elif acc_method == "Upload File":
-            af_up = st.file_uploader("Upload Acceptor (.smi/.mol/.sdf)", type=["smi","mol","sdf"], key="f_a_file")
-            if af_up:
-                acceptor_smiles = read_molecule_file(af_up) or ""
-        else:
-            acceptor_smiles = st.text_input("Paste Acceptor SMILES from drawing tool:", key="f_a_draw")
 
+        elif acc_method == "Upload File":
+            acc_file = st.file_uploader("Upload Acceptor (.smi/.mol/.sdf):",
+                                        type=["smi","mol","sdf"],
+                                        key="f_a_file")
+            if acc_file:
+                acceptor_smiles = read_molecule_file(acc_file) or ""
+
+        else:
+            st.info("Draw externally (JSME/Ketcher) and paste exported SMILES.")
+            acceptor_smiles = st.text_input("Paste Acceptor SMILES:", key="f_a_draw")
+
+    # -------------------------
+    # VALIDATION
+    # -------------------------
     if not (donor_smiles or acceptor_smiles):
-        st.warning("Please provide at least a Donor or Acceptor molecule.")
+        st.warning("Please provide at least a Donor or an Acceptor molecule.")
         st.stop()
 
-    # Determine mode
+    if model_emission is None or model_regression is None:
+        st.error("Models not loaded — cannot perform FRET analysis.")
+        st.stop()
+
+    # -------------------------
+    # DETERMINE MODE
+    # -------------------------
     is_donor = bool(donor_smiles)
-    query_smiles = donor_smiles if is_donor else acceptor_smiles
+    query = donor_smiles if is_donor else acceptor_smiles
 
-    st.markdown(
-        f"### 🔹 Mode: {'Donor → Find Acceptors' if is_donor else 'Acceptor → Find Donors'}"
-    )
+    st.markdown(f"### 🔹 Mode: {'Donor → Find Acceptors' if is_donor else 'Acceptor → Find Donors'}")
 
-    # Render structure (RDKit.js)
-    render_rdkitjs(query_smiles, key="fret_query_view")
+    # Show structure
+    render_rdkitjs(query, key="fret_query", height=240)
 
-    # Compute donor/acceptor predictions
-    feats = make_macss_pair(query_smiles, "O")
+    # -------------------------
+    # COMPUTE PREDICTED PROPERTIES
+    # -------------------------
+
+    feats = make_macss_pair(query, "O")  # use water
     if feats is None:
         st.error("Descriptor computation failed.")
         st.stop()
 
-    if is_donor:
-        pred_em = predict_model(model_emission, feats)
-        pred_abs = predict_model(model_regression, feats)
-        st.success(f"Predicted Donor Emission: **{pred_em:.2f} nm**")
-        st.info(f"Predicted Donor Absorption: **{pred_abs:.2f} nm**")
-    else:
-        pred_abs = predict_model(model_regression, feats)
-        pred_em = predict_model(model_emission, feats)
-        st.success(f"Predicted Acceptor Absorption: **{pred_abs:.2f} nm**")
-        st.info(f"Predicted Acceptor Emission: **{pred_em:.2f} nm**")
+    with st.spinner("Predicting spectral properties..."):
 
-    # Load dataset
+        # Always compute both
+        pred_abs = predict_model(model_regression, feats)      # predicted absorption
+        pred_em  = predict_model(model_emission, feats)        # predicted emission
+
+    # Show predicted results
+    if is_donor:
+        st.success(f"**Predicted Donor Absorption:** {pred_abs:.2f} nm")
+        st.success(f"**Predicted Donor Emission:** {pred_em:.2f} nm")
+    else:
+        st.success(f"**Predicted Acceptor Absorption:** {pred_abs:.2f} nm")
+        st.success(f"**Predicted Acceptor Emission:** {pred_em:.2f} nm")
+
+    st.write("---")
+
+    # -------------------------
+    # DATASET LOADING
+    # -------------------------
     df = load_dataset()
     if df is None:
-        st.error("Dataset missing.")
+        st.error("Dataset not available.")
         st.stop()
 
     required = {"Smiles", "AbsorptioMax (nm)", "EmissionMax (nm)", "Fluorescent labeling"}
@@ -372,56 +415,41 @@ with tab4:
         st.error("Dataset missing required columns.")
         st.stop()
 
-    df_fluoro = df[df["Fluorescent labeling"].astype(str).str.lower().isin(["yes","true","1"])]
-    df_fluoro = df_fluoro[df_fluoro["Smiles"] != query_smiles].copy()
+    # Filter fluorescent + remove self
+    df_f = df[df["Fluorescent labeling"].astype(str).str.lower().isin(["yes","true","1"])].copy()
+    df_f = df_f[df_f["Smiles"] != query]
 
-    if df_fluoro.empty:
-        st.error("No fluorescent candidates in dataset.")
+    if df_f.empty:
+        st.warning("No fluorescent partners found.")
         st.stop()
 
-    # Compute Δ and pick top 5
+    # -------------------------
+    # COMPUTE Δ BETWEEN QUERY AND DATASET
+    # -------------------------
     if is_donor:
-        df_fluoro["Δ (nm)"] = (df_fluoro["AbsorptioMax (nm)"] - pred_em).abs()
+        df_f["Δ (nm)"] = (df_f["AbsorptioMax (nm)"] - pred_em).abs()
     else:
-        df_fluoro["Δ (nm)"] = (df_fluoro["EmissionMax (nm)"] - pred_abs).abs()
+        df_f["Δ (nm)"] = (df_f["EmissionMax (nm)"] - pred_abs).abs()
 
-    top5 = df_fluoro.sort_values("Δ (nm)").head(5).reset_index(drop=True)
+    top5 = df_f.sort_values("Δ (nm)").head(5).reset_index(drop=True)
 
-    # Build pretty table
-    show_df = top5[["Smiles", "AbsorptioMax (nm)", "EmissionMax (nm)", "Δ (nm)"]].copy()
-    show_df.columns = ["SMILES", "Absorption (nm)", "Emission (nm)", "Δ (nm)"]
+    st.markdown("### 🧩 Top 5 FRET Partner Candidates")
 
-    for col in ["Absorption (nm)", "Emission (nm)", "Δ (nm)"]:
-        show_df[col] = show_df[col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
+    # -------------------------
+    # BUILD WIDE RESULTS TABLE
+    # -------------------------
+    wide = pd.DataFrame({
+        "Dataset SMILES": top5["Smiles"],
+        "Dataset Absorption (nm)": top5["AbsorptioMax (nm)"],
+        "Dataset Emission (nm)": top5["EmissionMax (nm)"],
+        "Δ (nm)": top5["Δ (nm)"],
+        "Predicted Query Absorption (nm)": [pred_abs]*5,
+        "Predicted Query Emission (nm)": [pred_em]*5,
+    })
 
-    st.markdown("### 🧩 Top 5 FRET Partners")
-    st.dataframe(show_df, use_container_width=True)
+    st.dataframe(wide, use_container_width=True)
 
-    # Overlap plots in expander (faster)
-    with st.expander("Show spectral overlap plots (optional)"):
-        import numpy as np
-        wavelength = np.linspace(300, 800, 1000)
-
-        if is_donor:
-            donor_curve = np.exp(-0.5 * ((wavelength - pred_em) / 20) ** 2)
-            for _, row in top5.iterrows():
-                acc_abs = row["AbsorptioMax (nm)"]
-                acc_curve = np.exp(-0.5 * ((wavelength - acc_abs) / 25) ** 2)
-                fig, ax = plt.subplots(figsize=(6, 3))
-                ax.plot(wavelength, donor_curve, label=f"Donor Emission {pred_em:.1f} nm")
-                ax.plot(wavelength, acc_curve, label=f"Acceptor Absorption {acc_abs:.1f} nm")
-                ax.legend()
-                st.pyplot(fig)
-        else:
-            acceptor_curve = np.exp(-0.5 * ((wavelength - pred_abs) / 25) ** 2)
-            for _, row in top5.iterrows():
-                donor_em_i = row["EmissionMax (nm)"]
-                donor_curve_i = np.exp(-0.5 * ((wavelength - donor_em_i) / 20) ** 2)
-                fig, ax = plt.subplots(figsize=(6, 3))
-                ax.plot(wavelength, donor_curve_i, label=f"Donor Emission {donor_em_i:.1f} nm")
-                ax.plot(wavelength, acceptor_curve, label=f"Acceptor Absorption {pred_abs:.1f} nm")
-                ax.legend()
-                st.pyplot(fig)
+    st.success("✓ FRET partner identification complete.")
 
 # Footer
 st.write("---")
