@@ -1,9 +1,12 @@
-numpy==1.23.5
+streamlit==1.33.0
 pandas==1.5.3
+numpy==1.23.5
 joblib==1.2.0
-pillow==9.5.0
-matplotlib==3.7.1
-rdkit-pypi==2023.3.1b1
+
+# DeepChem (no TensorFlow/PyTorch required)
 deepchem==2.8.0
-scikit-learn==1.1.2
-streamlit==1.27.0
+
+# Drawing handled by RDKit.js (browser-side) → DO NOT install rdkit-pypi
+# JSME uses iframe → no install needed
+
+matplotlib==3.7.1
