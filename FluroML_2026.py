@@ -1,4 +1,4 @@
-]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]# FluroML_2026.py
+# FluroML_2026.py
 # Final RDKit.js Streamlit app with updated FRET tab (uses dataset columns exactly)
 
 import warnings
