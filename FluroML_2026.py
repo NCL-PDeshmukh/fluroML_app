@@ -1,7 +1,12 @@
 # FluroML_2026.py
-# RDKit.js Streamlit app with JSME drawing and FRET analysis
-import os, warnings
+# Final, robust Streamlit app with JSME embedding (draw-in-place + copy-paste SMILES),
+# RDKit.js browser rendering (WASM), and working FRET tab using your exact dataset columns.
+
+import os
+import warnings
 warnings.filterwarnings("ignore")
+
+# Quiet Tensorflow/DeepChem/RDKit logs where possible
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["DC_SILENCE_LOGGING"] = "1"
 os.environ["RDKIT_SILENCE_DEPRECATION_WARNINGS"] = "1"
@@ -14,29 +19,29 @@ import numpy as np
 import deepchem as dc
 from rdkit import Chem, RDLogger
 
-RDLogger.DisableLog('rdApp.*')
+RDLogger.DisableLog("rdApp.*")
 
-st.set_page_config(page_title="FluroML: Fluorescence Predictor (RDKit.js + JSME)", layout="wide")
-st.title("FluroML: Molecular Fluorescence Predictor (RDKit.js + JSME)")
+st.set_page_config(page_title="FluroML: Molecular Fluorescence (JSME + RDKit.js)", layout="wide")
+st.title("FluroML: Molecular Fluorescence Predictor (JSME + RDKit.js)")
 
-# -----------------------------
-# Cached model loader
-# -----------------------------
+# ------------------------
+# Models: cached loader
+# ------------------------
 @st.cache_resource
 def load_model(path: str):
     try:
         return joblib.load(path)
     except Exception as e:
-        st.warning(f"Could not load model '{path}': {e}")
+        st.error(f"Error loading model {path}: {e}")
         return None
 
 model_fluorescence = load_model("best_classifier_compatible.joblib")
 model_regression   = load_model("new_best_regressor_compatible.joblib")
 model_emission     = load_model("best_regressor_emission_compatible.joblib")
 
-# -----------------------------
-# DeepChem featurizers
-# -----------------------------
+# ------------------------
+# Featurizers
+# ------------------------
 _morgan = dc.feat.CircularFingerprint(radius=3, size=1024)
 _maccs  = dc.feat.MACCSKeysFingerprint()
 
@@ -76,9 +81,9 @@ def make_macss_pair(mol_smiles: str, solvent_smiles: str):
         return None
     return np.concatenate([a, b]).reshape(1, -1)
 
-# -----------------------------
+# ------------------------
 # Prediction helper
-# -----------------------------
+# ------------------------
 def predict_model(model, features):
     if model is None or features is None:
         return None
@@ -91,9 +96,9 @@ def predict_model(model, features):
         st.error(f"Prediction failed: {e}")
         return None
 
-# -----------------------------
-# Read molecule files
-# -----------------------------
+# ------------------------
+# File reader
+# ------------------------
 def read_molecule_file(uploaded_file):
     name = uploaded_file.name.lower()
     data = uploaded_file.getvalue()
@@ -117,9 +122,9 @@ def read_molecule_file(uploaded_file):
         return Chem.MolToSmiles(mol) if mol else None
     return None
 
-# -----------------------------
+# ------------------------
 # Dataset loader for FRET
-# -----------------------------
+# ------------------------
 @st.cache_data
 def load_dataset(path="All Properties with Finguprints_3.csv"):
     try:
@@ -127,20 +132,21 @@ def load_dataset(path="All Properties with Finguprints_3.csv"):
     except Exception:
         return None
 
-# -----------------------------
-# RDKit.js renderer (local first, then CDN)
-# -----------------------------
+# ------------------------
+# RDKit.js renderer (WASM)
+# - tries local RDKit_minimal.js (repo root) first, then CDN fallback
+# ------------------------
 CDN_RDKIT_JS = "https://unpkg.com/@rdkit/rdkit/Code/MinimalLib/dist/RDKit_minimal.js"
 
 def render_rdkitjs(smiles: str, key: str, height: int = 320):
     if not smiles:
-        components.html("<div>No SMILES</div>", height=80)
+        components.html("<div>No SMILES provided</div>", height=80)
         return
     s = smiles.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "")
     html = f"""
-    <div id="rdkit_container_{key}">Loading structure...</div>
+    <div id="rdkit_container_{key}">Loading...</div>
     <script>
-    (function(){{
+    (function() {{
       function insertScript(src, onload, onerror) {{
         var s = document.createElement('script');
         s.src = src;
@@ -150,7 +156,7 @@ def render_rdkitjs(smiles: str, key: str, height: int = 320):
       }}
       insertScript("/RDKit_minimal.js", function(){{ initAndDraw(); }}, function(){{ 
          insertScript("{CDN_RDKIT_JS}", function(){{ initAndDraw(); }}, function(){{ 
-            document.getElementById("rdkit_container_{key}").innerHTML = "<div style='color:red'>Could not load RDKit.js locally or from CDN. Upload RDKit_minimal.js + rdkit.wasm to repo root.</div>"
+            document.getElementById("rdkit_container_{key}").innerHTML = "<div style='color:red;'>Could not load RDKit.js locally or from CDN. Upload RDKit_minimal.js + rdkit.wasm to repo root.</div>";
          }});
       }});
       function initAndDraw() {{
@@ -160,10 +166,10 @@ def render_rdkitjs(smiles: str, key: str, height: int = 320):
           }} else if (typeof RDKit !== 'undefined' && RDKit.get_mol) {{
             draw(RDKit);
           }} else {{
-            setTimeout(function(){{ if (typeof RDKit !== 'undefined' && RDKit.get_mol) draw(RDKit); else document.getElementById("rdkit_container_{key}").innerHTML = "<div style='color:red'>RDKit loaded but initialization not found.</div>"; }}, 200);
+            setTimeout(function(){{ if (typeof RDKit !== 'undefined' && RDKit.get_mol) draw(RDKit); else document.getElementById("rdkit_container_{key}").innerHTML = "<div style='color:red;'>RDKit loaded but initialization not found.</div>"; }}, 200);
           }}
         }} catch (e) {{
-          document.getElementById("rdkit_container_{key}").innerHTML = "<div style='color:red'>RDKit init error: " + e + "</div>";
+          document.getElementById("rdkit_container_{key}").innerHTML = "<div style='color:red;'>RDKit init error: " + e + "</div>";
         }}
       }}
       function draw(RDKit) {{
@@ -177,7 +183,7 @@ def render_rdkitjs(smiles: str, key: str, height: int = 320):
           document.getElementById("rdkit_container_{key}").innerHTML = svg;
           mol.delete();
         }} catch (err) {{
-          document.getElementById("rdkit_container_{key}").innerHTML = "<div style='color:red'>Drawing error: " + err + "</div>";
+          document.getElementById("rdkit_container_{key}").innerHTML = "<div style='color:red;'>Drawing error: " + err + "</div>";
         }}
       }}
     }})();
@@ -185,23 +191,31 @@ def render_rdkitjs(smiles: str, key: str, height: int = 320):
     """
     components.html(html, height=height, scrolling=False)
 
-# -----------------------------
-# JSME embed (iframe). Users export SMILES from the editor and paste below.
-# -----------------------------
-JSME_IFRAME_SRC = "https://peter-ertl.com/jsme/jsme.html"
+# ------------------------
+# JSME embed (inline iframe for drawing)
+# - We embed a commonly-hosted JSME demo page as an iframe so users can draw inline
+# - Because cross-frame messaging reliability varies, we provide a simple UX:
+#   1) User draws in the iframe
+#   2) Click "Export SMILES" inside JSME (the editor UI)
+#   3) Copy the SMILES and paste it into the Streamlit SMILES input below the iframe
+# This approach is stable and will NOT break Streamlit runtime.
+# ------------------------
+JSME_IFRAME_SRC = "https://peter-ertl.com/jsme/jsme.html"  # reliable public demo for drawing (works as iframe)
 
 def jsme_embed(height=420):
+    """Embed a JSME editor iframe with instructions. User must 'Export SMILES' and paste below."""
     html = f"""
     <div style="font-size:14px; padding:6px; border-radius:6px; background:#eef6ff; margin-bottom:8px;">
-      <strong>JSME editor:</strong> draw your molecule, click "Export SMILES", copy and paste the SMILES into the input field below.
+      <strong>JSME editor embedded below:</strong> draw your structure, then click <em>Export SMILES</em> inside the editor and copy the SMILES.
+      Paste the SMILES into the 'SMILES from JSME' input below.
     </div>
     <iframe src="{JSME_IFRAME_SRC}" width="100%" height="{height}" style="border:1px solid #ddd; border-radius:6px;"></iframe>
     """
     components.html(html, height=height+80, scrolling=True)
 
-# -----------------------------
-# Tabs
-# -----------------------------
+# ------------------------
+# Layout: tabs
+# ------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
     "Fluorescence Classification",
     "Absorption Max Prediction",
@@ -209,150 +223,154 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "FRET Analysis"
 ])
 
-# -----------------------------
-# Tab 1: Classification
-# -----------------------------
+# ------------------------
+# Tab 1: Fluorescence Classification
+# ------------------------
 with tab1:
     st.header("🧪 Fluorescence Classification")
-    method = st.radio("Input Method:", ("SMILES Input", "Draw Molecule (JSME)", "Upload File"), key="tab1_method")
+    method = st.radio("Input Method:", ("SMILES Input", "Draw Molecule (JSME)", "Upload File"), key="clf_method")
     smiles = ""
     if method == "SMILES Input":
-        smiles = st.text_input("Enter SMILES:", key="tab1_smi")
+        smiles = st.text_input("Enter SMILES:", key="clf_smi")
     elif method == "Draw Molecule (JSME)":
         jsme_embed(height=360)
-        smiles = st.text_input("SMILES from JSME (paste here):", key="tab1_jsme")
+        smiles = st.text_input("SMILES from JSME (paste after export):", key="clf_jsme_smi")
     else:
-        f = st.file_uploader("Upload (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="tab1_file")
-        if f:
-            smiles = read_molecule_file(f) or ""
+        uploaded = st.file_uploader("Upload molecule (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="clf_file")
+        if uploaded:
+            smiles = read_molecule_file(uploaded) or ""
 
     if smiles:
+        # validate SMILES
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
-            st.error("Invalid SMILES")
+            st.error("Invalid SMILES.")
         else:
-            render_rdkitjs(smiles, key="tab1_rend", height=260)
+            render_rdkitjs(smiles, key="clf_view", height=280)
             feats = smiles_to_morgan(smiles)
             if feats is not None:
                 p = predict_model(model_fluorescence, feats)
                 if p is not None:
                     st.success("Fluorescent" if int(p) == 1 else "Non-Fluorescent")
 
-# -----------------------------
-# Tab 2: Absorption
-# -----------------------------
+# ------------------------
+# Tab 2: Absorption Max Prediction
+# ------------------------
 with tab2:
     st.header("🌈 Absorption Max Prediction")
-    method2 = st.radio("Input Method:", ("SMILES Input", "Draw Molecule (JSME)", "Upload File"), key="tab2_method")
+    method2 = st.radio("Input Method:", ("SMILES Input", "Draw Molecule (JSME)", "Upload File"), key="abs_method")
     abs_smiles = ""
     if method2 == "SMILES Input":
-        abs_smiles = st.text_input("Enter SMILES:", key="tab2_smi")
+        abs_smiles = st.text_input("Enter Molecule SMILES:", key="abs_smi")
     elif method2 == "Draw Molecule (JSME)":
         jsme_embed(height=360)
-        abs_smiles = st.text_input("SMILES from JSME (paste):", key="tab2_jsme")
+        abs_smiles = st.text_input("SMILES from JSME (paste after export):", key="abs_jsme_smi")
     else:
-        f2 = st.file_uploader("Upload (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="tab2_file")
-        if f2:
-            abs_smiles = read_molecule_file(f2) or ""
+        up = st.file_uploader("Upload molecule (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="abs_file")
+        if up:
+            abs_smiles = read_molecule_file(up) or ""
 
-    solvent = st.text_input("Solvent SMILES (default 'O'):", value="O", key="tab2_solv")
+    solvent = st.text_input("Solvent SMILES (default 'O'):", value="O", key="abs_solvent")
 
     if abs_smiles:
         mol = Chem.MolFromSmiles(abs_smiles)
         if mol is None:
-            st.error("Invalid SMILES")
+            st.error("Invalid SMILES.")
         else:
-            render_rdkitjs(abs_smiles, key="tab2_rend", height=260)
+            render_rdkitjs(abs_smiles, key="abs_view", height=260)
             feats = make_macss_pair(abs_smiles, solvent)
             if feats is not None:
                 p = predict_model(model_regression, feats)
                 if p is not None:
                     st.success(f"Predicted Absorption Max: {p:.2f} nm")
 
-# -----------------------------
-# Tab 3: Emission
-# -----------------------------
+# ------------------------
+# Tab 3: Emission Max Prediction
+# ------------------------
 with tab3:
     st.header("🔦 Emission Max Prediction")
-    method3 = st.radio("Input Method:", ("SMILES Input", "Draw Molecule (JSME)", "Upload File"), key="tab3_method")
+    method3 = st.radio("Input Method:", ("SMILES Input", "Draw Molecule (JSME)", "Upload File"), key="emi_method")
     em_smiles = ""
     if method3 == "SMILES Input":
-        em_smiles = st.text_input("Enter SMILES:", key="tab3_smi")
+        em_smiles = st.text_input("Enter Molecule SMILES:", key="emi_smi")
     elif method3 == "Draw Molecule (JSME)":
         jsme_embed(height=360)
-        em_smiles = st.text_input("SMILES from JSME (paste):", key="tab3_jsme")
+        em_smiles = st.text_input("SMILES from JSME (paste after export):", key="emi_jsme_smi")
     else:
-        f3 = st.file_uploader("Upload (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="tab3_file")
-        if f3:
-            em_smiles = read_molecule_file(f3) or ""
+        up2 = st.file_uploader("Upload molecule (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="emi_file")
+        if up2:
+            em_smiles = read_molecule_file(up2) or ""
 
-    solvent_em = st.text_input("Solvent SMILES (default 'O'):", value="O", key="tab3_solv")
+    solvent_em = st.text_input("Solvent SMILES (default 'O'):", value="O", key="emi_solvent")
 
     if em_smiles:
         mol = Chem.MolFromSmiles(em_smiles)
         if mol is None:
-            st.error("Invalid SMILES")
+            st.error("Invalid SMILES.")
         else:
-            render_rdkitjs(em_smiles, key="tab3_rend", height=260)
+            render_rdkitjs(em_smiles, key="emi_view", height=260)
             feats = make_macss_pair(em_smiles, solvent_em)
             if feats is not None:
                 p = predict_model(model_emission, feats)
                 if p is not None:
                     st.success(f"Predicted Emission Max: {p:.2f} nm")
 
-# -----------------------------
-# Tab 4: FRET analysis
-# -----------------------------
+# ------------------------
+# Tab 4: FRET Pair Analysis (using your dataset columns exactly)
+# ------------------------
 import matplotlib.pyplot as plt
 
 with tab4:
     st.markdown("## 🔬 FRET Pair Analysis")
-    st.markdown("Provide Donor or Acceptor (draw with JSME or paste SMILES), then search dataset for best partners.")
+    st.markdown("Provide a Donor or Acceptor molecule (draw with JSME or paste SMILES), then search dataset for best FRET partners.")
 
     colD, colA = st.columns(2)
 
     with colD:
         st.subheader("Donor")
-        d_method = st.radio("Donor input:", ("SMILES Input", "Draw Molecule (JSME)", "Upload File"), key="fret_d_method")
+        donor_method = st.radio("Donor Input:", ("SMILES Input", "Draw Molecule (JSME)", "Upload File"), key="fret_donor_method")
         donor_smiles = ""
-        if d_method == "SMILES Input":
-            donor_smiles = st.text_input("Donor SMILES:", key="fret_d_smi")
-        elif d_method == "Draw Molecule (JSME)":
+        if donor_method == "SMILES Input":
+            donor_smiles = st.text_input("Donor SMILES:", key="fret_donor_smi")
+        elif donor_method == "Draw Molecule (JSME)":
             jsme_embed(height=320)
-            donor_smiles = st.text_input("Donor SMILES from JSME (paste):", key="fret_d_jsme")
+            donor_smiles = st.text_input("SMILES from JSME (paste):", key="fret_donor_jsme")
         else:
-            dfile = st.file_uploader("Upload donor (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="fret_d_file")
+            dfile = st.file_uploader("Upload donor (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="fret_donor_file")
             if dfile:
                 donor_smiles = read_molecule_file(dfile) or ""
 
     with colA:
         st.subheader("Acceptor")
-        a_method = st.radio("Acceptor input:", ("SMILES Input", "Draw Molecule (JSME)", "Upload File"), key="fret_a_method")
+        acceptor_method = st.radio("Acceptor Input:", ("SMILES Input", "Draw Molecule (JSME)", "Upload File"), key="fret_acceptor_method")
         acceptor_smiles = ""
-        if a_method == "SMILES Input":
-            acceptor_smiles = st.text_input("Acceptor SMILES:", key="fret_a_smi")
-        elif a_method == "Draw Molecule (JSME)":
+        if acceptor_method == "SMILES Input":
+            acceptor_smiles = st.text_input("Acceptor SMILES:", key="fret_acceptor_smi")
+        elif acceptor_method == "Draw Molecule (JSME)":
             jsme_embed(height=320)
-            acceptor_smiles = st.text_input("Acceptor SMILES from JSME (paste):", key="fret_a_jsme")
+            acceptor_smiles = st.text_input("SMILES from JSME (paste):", key="fret_acceptor_jsme")
         else:
-            afile = st.file_uploader("Upload acceptor (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="fret_a_file")
+            afile = st.file_uploader("Upload acceptor (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="fret_acceptor_file")
             if afile:
                 acceptor_smiles = read_molecule_file(afile) or ""
 
+    # Proceed if we have at least one molecule
     if not (donor_smiles or acceptor_smiles):
-        st.info("Please provide at least a Donor or Acceptor to start FRET analysis.")
+        st.warning("Please provide a Donor or an Acceptor (draw or paste SMILES).")
     else:
         if model_emission is None or model_regression is None:
-            st.error("Required models not loaded. FRET analysis cannot proceed.")
+            st.error("Required models (emission/absorption) not loaded. FRET analysis cannot proceed.")
         else:
             is_donor = bool(donor_smiles)
-            query = donor_smiles if is_donor else acceptor_smiles
+            query_smiles = donor_smiles if is_donor else acceptor_smiles
             st.markdown(f"### Mode: {'Donor → Find Acceptors' if is_donor else 'Acceptor → Find Donors'}")
-            render_rdkitjs(query, key="fret_query", height=260)
+            # render structure
+            render_rdkitjs(query_smiles, key="fret_query", height=260)
 
-            feats = make_macss_pair(query, "O")
+            # compute MACCS pair with water
+            feats = make_macss_pair(query_smiles, "O")
             if feats is None:
-                st.error("Failed to compute descriptors for query.")
+                st.error("Descriptor computation failed for query molecule.")
             else:
                 with st.spinner("Predicting spectral property..."):
                     if is_donor:
@@ -368,64 +386,76 @@ with tab4:
                         else:
                             st.write(f"Predicted Acceptor Absorption Max: {q_abs:.2f} nm")
 
-                st.markdown("### 🔍 Searching dataset for partners...")
+                # dataset search
+                st.markdown("### 🔍 Dataset-based partner search")
                 df = load_dataset()
                 if df is None:
-                    st.info("Dataset not found. Upload 'All Properties with Finguprints_3.csv' to enable partner search.")
+                    st.info("Dataset 'All Properties with Finguprints_3.csv' not found. Upload dataset to enable partner search.")
                 else:
-                    required_cols = {"Smiles", "AbsorptioMax (nm)", "EmissionMax (nm)", "Fluorescent labeling"}
-                    if not required_cols.issubset(set(df.columns)):
-                        st.warning("Dataset missing required columns; partner search skipped.")
+                    # Validate required columns
+                    required = {"Smiles", "AbsorptioMax (nm)", "EmissionMax (nm)", "Fluorescent labeling"}
+                    if not required.issubset(set(df.columns)):
+                        st.warning("Dataset missing required columns (Smiles, AbsorptioMax (nm), EmissionMax (nm), Fluorescent labeling). Partner search skipped.")
                     else:
                         df_f = df[df["Fluorescent labeling"].astype(str).str.lower().isin(["yes", "true", "1"])].copy()
-                        df_f = df_f[df_f["Smiles"] != query]
+                        df_f = df_f[df_f["Smiles"] != query_smiles]
                         if df_f.empty:
-                            st.info("No fluorescent candidates after filtering.")
+                            st.info("No fluorescent candidates in dataset after filtering.")
                         else:
                             if is_donor:
                                 df_f["Δ (nm)"] = (df_f["AbsorptioMax (nm)"] - q_em).abs()
                                 top = df_f.sort_values("Δ (nm)").head(5).reset_index(drop=True)
-                                st.markdown("### Top 5 Acceptors")
+                                st.markdown("### Top 5 acceptor candidates")
                             else:
                                 df_f["Δ (nm)"] = (df_f["EmissionMax (nm)"] - q_abs).abs()
                                 top = df_f.sort_values("Δ (nm)").head(5).reset_index(drop=True)
-                                st.markdown("### Top 5 Donors")
+                                st.markdown("### Top 5 donor candidates")
 
+                            # display table
                             display = top[["Smiles", "AbsorptioMax (nm)", "EmissionMax (nm)", "Δ (nm)"]].copy()
-                            display.rename(columns={"Smiles":"SMILES","AbsorptioMax (nm)":"Absorption (nm)","EmissionMax (nm)":"Emission (nm)"}, inplace=True)
+                            display.rename(columns={
+                                "Smiles": "SMILES",
+                                "AbsorptioMax (nm)": "Absorption (nm)",
+                                "EmissionMax (nm)": "Emission (nm)"
+                            }, inplace=True)
                             for c in ["Absorption (nm)", "Emission (nm)", "Δ (nm)"]:
                                 display[c] = display[c].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
                             st.table(display.reset_index(drop=True))
 
+                            # visual overlap plots
                             wavelength = np.linspace(300, 800, 1000)
                             if is_donor:
                                 donor_curve = np.exp(-0.5 * ((wavelength - q_em) / 20) ** 2)
-                                for _, row in top.iterrows():
+                                for idx, row in top.iterrows():
                                     acc_abs = float(row["AbsorptioMax (nm)"])
                                     acc_curve = np.exp(-0.5 * ((wavelength - acc_abs) / 25) ** 2)
                                     overlap = np.trapz(np.minimum(donor_curve, acc_curve), wavelength)
                                     overlap_pct = overlap / np.trapz(donor_curve, wavelength) * 100
-                                    fig, ax = plt.subplots(figsize=(6,3))
+                                    fig, ax = plt.subplots(figsize=(6, 3))
                                     ax.plot(wavelength, donor_curve, label=f"Donor Em ({q_em:.1f} nm)")
                                     ax.plot(wavelength, acc_curve, label=f"Acc Abs ({acc_abs:.1f} nm)")
                                     ax.fill_between(wavelength, np.minimum(donor_curve, acc_curve), color="violet", alpha=0.3)
-                                    ax.set_xlabel("Wavelength (nm)"); ax.set_ylabel("Intensity")
-                                    ax.set_title(f"Overlap ≈ {overlap_pct:.1f}% | Δλ={abs(q_em-acc_abs):.1f} nm")
-                                    ax.legend(); st.pyplot(fig)
+                                    ax.set_xlabel("Wavelength (nm)")
+                                    ax.set_ylabel("Intensity")
+                                    ax.set_title(f"Overlap ≈ {overlap_pct:.1f}% | Δλ={abs(q_em - acc_abs):.1f} nm")
+                                    ax.legend()
+                                    st.pyplot(fig)
                             else:
                                 acc_curve = np.exp(-0.5 * ((wavelength - q_abs) / 25) ** 2)
-                                for _, row in top.iterrows():
+                                for idx, row in top.iterrows():
                                     donor_em_i = float(row["EmissionMax (nm)"])
                                     donor_curve_i = np.exp(-0.5 * ((wavelength - donor_em_i) / 20) ** 2)
                                     overlap = np.trapz(np.minimum(donor_curve_i, acc_curve), wavelength)
                                     overlap_pct = overlap / np.trapz(donor_curve_i, wavelength) * 100
-                                    fig, ax = plt.subplots(figsize=(6,3))
+                                    fig, ax = plt.subplots(figsize=(6, 3))
                                     ax.plot(wavelength, donor_curve_i, label=f"Donor Em ({donor_em_i:.1f} nm)")
                                     ax.plot(wavelength, acc_curve, label=f"Acc Abs ({q_abs:.1f} nm)")
                                     ax.fill_between(wavelength, np.minimum(donor_curve_i, acc_curve), color="violet", alpha=0.3)
-                                    ax.set_xlabel("Wavelength (nm)"); ax.set_ylabel("Intensity")
-                                    ax.set_title(f"Overlap ≈ {overlap_pct:.1f}% | Δλ={abs(donor_em_i-q_abs):.1f} nm")
-                                    ax.legend(); st.pyplot(fig)
+                                    ax.set_xlabel("Wavelength (nm)")
+                                    ax.set_ylabel("Intensity")
+                                    ax.set_title(f"Overlap ≈ {overlap_pct:.1f}% | Δλ={abs(donor_em_i - q_abs):.1f} nm")
+                                    ax.legend()
+                                    st.pyplot(fig)
 
 # Footer
 st.write("---")
