@@ -294,9 +294,10 @@ with tab3:
                 st.success(f"Predicted Emission Max: {pred:.2f} nm")
 
 # ---------------------------
-# Tab 4 — FRET Pair Analysis (updated)
+# Tab 4 — FRET Pair Analysis (final updated with predictions)
 # ---------------------------
 import matplotlib.pyplot as plt
+import numpy as np
 
 with tab4:
     st.markdown("## 🔬 FRET Pair Analysis")
@@ -307,143 +308,251 @@ with tab4:
     # Donor input
     with colD:
         st.subheader("Donor Molecule")
-        donor_method = st.radio("Input Method:", ("SMILES Input", "Draw (external)", "Upload File"), key="f_d_method")
+        donor_method = st.radio("Input Method (Donor):", ("SMILES Input", "Draw (external)", "Upload File"), key="f_d_method_v2")
         donor_smiles = ""
         if donor_method == "SMILES Input":
-            donor_smiles = st.text_input("Enter Donor SMILES:", key="f_d_smi")
+            donor_smiles = st.text_input("Enter Donor SMILES:", key="f_d_smi_v2")
         elif donor_method == "Upload File":
-            df_up = st.file_uploader("Upload Donor (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="f_d_file")
+            df_up = st.file_uploader("Upload Donor (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="f_d_file_v2")
             if df_up:
                 donor_smiles = read_molecule_file(df_up) or ""
         else:
-            st.info("Draw externally (JSME/Ketcher) and paste exported SMILES here.")
-            donor_smiles = st.text_input("Paste Donor SMILES from drawing tool:", key="f_d_draw")
+            st.info("Draw externally (e.g., JSME) and paste exported SMILES here.")
+            donor_smiles = st.text_input("Paste Donor SMILES from drawing tool:", key="f_d_draw_v2")
 
     # Acceptor input
     with colA:
         st.subheader("Acceptor Molecule")
-        acc_method = st.radio("Input Method:", ("SMILES Input", "Draw (external)", "Upload File"), key="f_a_method")
+        acc_method = st.radio("Input Method (Acceptor):", ("SMILES Input", "Draw (external)", "Upload File"), key="f_a_method_v2")
         acceptor_smiles = ""
         if acc_method == "SMILES Input":
-            acceptor_smiles = st.text_input("Enter Acceptor SMILES:", key="f_a_smi")
+            acceptor_smiles = st.text_input("Enter Acceptor SMILES:", key="f_a_smi_v2")
         elif acc_method == "Upload File":
-            af_up = st.file_uploader("Upload Acceptor (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="f_a_file")
+            af_up = st.file_uploader("Upload Acceptor (.smi/.mol/.sdf):", type=["smi","mol","sdf"], key="f_a_file_v2")
             if af_up:
                 acceptor_smiles = read_molecule_file(af_up) or ""
         else:
-            st.info("Draw externally (JSME/Ketcher) and paste exported SMILES here.")
-            acceptor_smiles = st.text_input("Paste Acceptor SMILES from drawing tool:", key="f_a_draw")
+            st.info("Draw externally (e.g., JSME) and paste exported SMILES here.")
+            acceptor_smiles = st.text_input("Paste Acceptor SMILES from drawing tool:", key="f_a_draw_v2")
 
-    # Warn if nothing
+    # Validate presence
     if not (donor_smiles or acceptor_smiles):
         st.warning("Please provide at least a Donor or an Acceptor molecule to begin FRET analysis.")
     else:
+        # Ensure models available
         if model_emission is None or model_regression is None:
             st.error("Required models (emission or absorption) not loaded. Cannot perform FRET analysis.")
         else:
+            # Mode selection & query
             is_donor = bool(donor_smiles)
             query_smiles = donor_smiles if is_donor else acceptor_smiles
             st.markdown(f"### 🔹 Mode: {'Donor → Find Acceptors' if is_donor else 'Acceptor → Find Donors'}")
 
-            # show query structure
-            render_rdkitjs(query_smiles, key="fret_query", height=280)
+            # Render query structure
+            render_rdkitjs(query_smiles, key=f"fret_query_v2", height=280)
 
-            # compute descriptors (MACCS pair with water)
-            feats = make_macss_pair(query_smiles, "O")
-            if feats is None:
+            # Compute predicted properties for the query molecule (both Abs & Em)
+            query_feats = make_macss_pair(query_smiles, "O")
+            if query_feats is None:
                 st.error("Descriptor computation failed for query molecule.")
             else:
-                with st.spinner("Predicting spectral property..."):
-                    if is_donor:
-                        query_em = predict_model(model_emission, feats)
-                        if query_em is None:
-                            st.error("Donor emission prediction failed.")
-                        else:
-                            st.write(f"**Predicted Donor Emission Max:** {query_em:.2f} nm")
+                with st.spinner("Predicting properties for query..."):
+                    # Predicted absorption = regression model, predicted emission = emission model
+                    query_pred_abs = predict_model(model_regression, query_feats)
+                    query_pred_em  = predict_model(model_emission, query_feats)
+
+                # Display query predictions
+                colq1, colq2, colq3 = st.columns(3)
+                with colq1:
+                    if query_pred_abs is not None:
+                        st.success(f"Predicted Absorption (query): {query_pred_abs:.2f} nm")
                     else:
-                        query_abs = predict_model(model_regression, feats)
-                        if query_abs is None:
-                            st.error("Acceptor absorption prediction failed.")
-                        else:
-                            st.write(f"**Predicted Acceptor Absorption Max:** {query_abs:.2f} nm")
+                        st.info("Predicted Absorption (query): N/A")
+                with colq2:
+                    if query_pred_em is not None:
+                        st.success(f"Predicted Emission (query): {query_pred_em:.2f} nm")
+                    else:
+                        st.info("Predicted Emission (query): N/A")
+                with colq3:
+                    st.caption("Note: predictions use solvent='O' (water) by default for descriptor pairing.")
 
-                # Load dataset and search
-                st.markdown("### 🔍 Searching for best matching FRET partners...")
+                # Load dataset
+                st.markdown("### 🔍 Searching dataset for best partners...")
                 df = load_dataset()
-
                 if df is None:
                     st.info("FRET dataset not found (All Properties with Finguprints_3.csv). Dataset-based partner search skipped.")
                 else:
-                    # Validate required columns (we expect exact column names based on your CSV)
                     required_cols = {"Smiles", "AbsorptioMax (nm)", "EmissionMax (nm)", "Fluorescent labeling"}
                     if not required_cols.issubset(set(df.columns)):
-                        st.warning("FRET dataset missing one or more required columns; partner search skipped.")
+                        st.warning("FRET dataset missing required columns; partner search skipped.")
                     else:
-                        # filter to fluorescent entries
-                        df_fluoro = df[df["Fluorescent labeling"].astype(str).str.lower().isin(["yes", "true", "1"])].copy()
+                        # Filter fluorescent labeled entries and exclude query itself
+                        df_fluoro = df[df["Fluorescent labeling"].astype(str).str.lower().isin(["yes","true","1"])].copy()
                         df_fluoro = df_fluoro[df_fluoro["Smiles"] != query_smiles]
-
                         if df_fluoro.empty:
                             st.info("No fluorescent candidates found in dataset after filtering.")
                         else:
-                            if is_donor:
-                                df_fluoro["Δ (nm)"] = (df_fluoro["AbsorptioMax (nm)"] - query_em).abs()
-                                top_candidates = df_fluoro.sort_values("Δ (nm)").head(5).reset_index(drop=True)
-                                st.markdown("### 🧩 Top 5 FRET Acceptor Candidates")
-                            else:
-                                df_fluoro["Δ (nm)"] = (df_fluoro["EmissionMax (nm)"] - query_abs).abs()
-                                top_candidates = df_fluoro.sort_values("Δ (nm)").head(5).reset_index(drop=True)
-                                st.markdown("### 🧩 Top 5 FRET Donor Candidates")
+                            # For donor mode — find acceptors with dataset absorption closest to predicted donor emission
+                            # For acceptor mode — find donors with dataset emission closest to predicted acceptor absorption
+                            rows = []
+                            for idx, row in df_fluoro.iterrows():
+                                cand_smiles = row["Smiles"]
+                                ds_abs = row.get("AbsorptioMax (nm)", np.nan)
+                                ds_em  = row.get("EmissionMax (nm)", np.nan)
 
-                            # Build display table with consistent column names
-                            display_df = top_candidates[["Smiles", "AbsorptioMax (nm)", "EmissionMax (nm)", "Δ (nm)"]].copy()
-                            display_df.rename(columns={
-                                "Smiles": "SMILES",
-                                "AbsorptioMax (nm)": "Absorption (nm)",
-                                "EmissionMax (nm)": "Emission (nm)"
-                            }, inplace=True)
-                            # Format numeric columns
-                            for c in ["Absorption (nm)", "Emission (nm)", "Δ (nm)"]:
-                                display_df[c] = display_df[c].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
-                            st.table(display_df.reset_index(drop=True))
+                                # Compute predicted properties for candidate
+                                cand_feats = make_macss_pair(cand_smiles, "O")
+                                if cand_feats is None:
+                                    pred_abs = np.nan
+                                    pred_em  = np.nan
+                                else:
+                                    pred_abs = predict_model(model_regression, cand_feats)
+                                    pred_em  = predict_model(model_emission, cand_feats)
 
-                            # Visualization (spectral overlaps)
+                                # Δ definition:
+                                if is_donor:
+                                    # Δ = |dataset absorption (candidate) - predicted donor emission|
+                                    if pd.notna(ds_abs) and (query_pred_em is not None):
+                                        delta = abs(float(ds_abs) - float(query_pred_em))
+                                    else:
+                                        delta = np.nan
+                                else:
+                                    # acceptor mode: Δ = |dataset emission (candidate donor) - predicted acceptor absorption|
+                                    if pd.notna(ds_em) and (query_pred_abs is not None):
+                                        delta = abs(float(ds_em) - float(query_pred_abs))
+                                    else:
+                                        delta = np.nan
+
+                                rows.append({
+                                    "SMILES": cand_smiles,
+                                    "Dataset Absorption (nm)": ds_abs if pd.notna(ds_abs) else np.nan,
+                                    "Dataset Emission (nm)": ds_em if pd.notna(ds_em) else np.nan,
+                                    "Predicted Absorption (nm)": pred_abs if (pred_abs is not None) else np.nan,
+                                    "Predicted Emission (nm)": pred_em if (pred_em is not None) else np.nan,
+                                    "Δ (nm)": delta
+                                })
+
+                            # Build DataFrame and sort by Δ ascending (smallest spectral gap first)
+                            df_candidates = pd.DataFrame(rows)
+                            # drop rows where Δ is NaN for sorting, push them to bottom
+                            df_candidates["Δ_sort"] = df_candidates["Δ (nm)"].apply(lambda x: x if not pd.isna(x) else 1e6)
+                            df_candidates = df_candidates.sort_values("Δ_sort").drop(columns=["Δ_sort"]).reset_index(drop=True)
+
+                            # Take top 5
+                            top5 = df_candidates.head(5).copy()
+
+                            # Format numeric columns for presentation
+                            for col in ["Dataset Absorption (nm)", "Dataset Emission (nm)", "Predicted Absorption (nm)", "Predicted Emission (nm)", "Δ (nm)"]:
+                                top5[col] = top5[col].apply(lambda x: f"{x:.2f}" if (pd.notna(x) and not np.isinf(x)) else "N/A")
+
+                            st.markdown("### 🧩 Top 5 Candidates (dataset + predicted values)")
+                            st.table(top5)
+
+                            # For each candidate, show structure, dataset vs predicted values, and overlap plot
+                            st.markdown("### 🔬 Candidate details and overlap plots")
                             wavelength = np.linspace(300, 800, 1000)
-                            if is_donor:
-                                donor_em_val = query_em
-                                donor_curve = np.exp(-0.5 * ((wavelength - donor_em_val) / 20) ** 2)
-                                for idx, row in top_candidates.iterrows():
-                                    acc_abs = float(row["AbsorptioMax (nm)"])
-                                    acc_curve = np.exp(-0.5 * ((wavelength - acc_abs) / 25) ** 2)
-                                    overlap_area = np.trapz(np.minimum(donor_curve, acc_curve), wavelength)
-                                    overlap_pct = overlap_area / np.trapz(donor_curve, wavelength) * 100
-                                    fig, ax = plt.subplots(figsize=(6, 3))
-                                    ax.plot(wavelength, donor_curve, label=f"Donor Emission ({donor_em_val:.1f} nm)")
-                                    ax.plot(wavelength, acc_curve, label=f"Acceptor Absorption ({acc_abs:.1f} nm)")
-                                    ax.fill_between(wavelength, np.minimum(donor_curve, acc_curve), color="violet", alpha=0.3)
-                                    ax.set_xlabel("Wavelength (nm)")
-                                    ax.set_ylabel("Intensity")
-                                    ax.set_title(f"Overlap ≈ {overlap_pct:.1f}% | Δλ={abs(donor_em_val - acc_abs):.1f} nm")
-                                    ax.legend()
-                                    st.pyplot(fig)
-                            else:
-                                acceptor_abs_val = query_abs
-                                acceptor_curve = np.exp(-0.5 * ((wavelength - acceptor_abs_val) / 25) ** 2)
-                                for idx, row in top_candidates.iterrows():
-                                    donor_em_i = float(row["EmissionMax (nm)"])
-                                    donor_curve_i = np.exp(-0.5 * ((wavelength - donor_em_i) / 20) ** 2)
-                                    overlap_area = np.trapz(np.minimum(donor_curve_i, acceptor_curve), wavelength)
-                                    overlap_pct = overlap_area / np.trapz(donor_curve_i, wavelength) * 100
-                                    fig, ax = plt.subplots(figsize=(6, 3))
-                                    ax.plot(wavelength, donor_curve_i, label=f"Donor Emission ({donor_em_i:.1f} nm)")
-                                    ax.plot(wavelength, acceptor_curve, label=f"Acceptor Absorption ({acceptor_abs_val:.1f} nm)")
-                                    ax.fill_between(wavelength, np.minimum(donor_curve_i, acceptor_curve), color="violet", alpha=0.3)
-                                    ax.set_xlabel("Wavelength (nm)")
-                                    ax.set_ylabel("Intensity")
-                                    ax.set_title(f"Overlap ≈ {overlap_pct:.1f}% | Δλ={abs(donor_em_i - acceptor_abs_val):.1f} nm")
-                                    ax.legend()
-                                    st.pyplot(fig)
+
+                            for i, cand in top5.reset_index(drop=True).iterrows():
+                                csmi = cand["SMILES"]
+                                ds_abs_val = cand["Dataset Absorption (nm)"]
+                                ds_em_val  = cand["Dataset Emission (nm)"]
+                                pred_abs_val = cand["Predicted Absorption (nm)"]
+                                pred_em_val  = cand["Predicted Emission (nm)"]
+                                delta_val = cand["Δ (nm)"]
+
+                                st.markdown(f"#### Candidate {i+1}")
+                                # show small two-column layout: structure + values
+                                c1, c2 = st.columns([1, 2])
+                                with c1:
+                                    render_rdkitjs(csmi, key=f"fret_cand_{i}_view_v2", height=220)
+                                with c2:
+                                    st.write(f"**SMILES:** `{csmi}`")
+                                    st.write(f"Dataset Absorption: **{ds_abs_val}** nm")
+                                    st.write(f"Dataset Emission: **{ds_em_val}** nm")
+                                    st.write(f"Predicted Absorption: **{pred_abs_val}** nm")
+                                    st.write(f"Predicted Emission: **{pred_em_val}** nm")
+                                    st.write(f"Δ (nm): **{delta_val}**")
+
+                                # Overlap plot
+                                # Convert strings like "N/A" back to floats where possible
+                                try:
+                                    if pred_em_val != "N/A":
+                                        pred_em_float = float(pred_em_val)
+                                    else:
+                                        pred_em_float = None
+                                except:
+                                    pred_em_float = None
+                                try:
+                                    if pred_abs_val != "N/A":
+                                        pred_abs_float = float(pred_abs_val)
+                                    else:
+                                        pred_abs_float = None
+                                except:
+                                    pred_abs_float = None
+                                try:
+                                    if ds_abs_val != "N/A":
+                                        ds_abs_float = float(ds_abs_val)
+                                    else:
+                                        ds_abs_float = None
+                                except:
+                                    ds_abs_float = None
+                                try:
+                                    if ds_em_val != "N/A":
+                                        ds_em_float = float(ds_em_val)
+                                    else:
+                                        ds_em_float = None
+                                except:
+                                    ds_em_float = None
+
+                                fig, ax = plt.subplots(figsize=(7,3))
+                                # Determine curves depending on mode
+                                if is_donor:
+                                    # donor emission = query_pred_em, acceptor absorption -> prefer predicted then dataset
+                                    if query_pred_em is not None:
+                                        donor_curve = np.exp(-0.5 * ((wavelength - float(query_pred_em)) / 20) ** 2)
+                                        ax.plot(wavelength, donor_curve, label=f"Donor Em ({query_pred_em:.1f} nm)", lw=2)
+                                    else:
+                                        donor_curve = None
+                                    # acceptor absorption: prefer dataset (ds_abs_float) then predicted (pred_abs_float)
+                                    acc_x = pred_abs_float if pred_abs_float is not None else ds_abs_float
+                                    if acc_x is not None:
+                                        acc_curve = np.exp(-0.5 * ((wavelength - acc_x) / 25) ** 2)
+                                        ax.plot(wavelength, acc_curve, label=f"Acceptor Abs ({acc_x:.1f} nm)", lw=2)
+                                    else:
+                                        acc_curve = None
+                                    if donor_curve is not None and acc_curve is not None:
+                                        overlap_area = np.trapz(np.minimum(donor_curve, acc_curve), wavelength)
+                                        overlap_pct = overlap_area / np.trapz(donor_curve, wavelength) * 100
+                                        ax.fill_between(wavelength, np.minimum(donor_curve, acc_curve), color="violet", alpha=0.3)
+                                        ax.set_title(f"Overlap ≈ {overlap_pct:.1f}% | Δλ={delta_val}")
+                                    else:
+                                        ax.set_title("Overlap: Insufficient numeric data to compute")
+                                else:
+                                    # acceptor mode: acceptor absorption = query_pred_abs, donors: prefer dataset emission then predicted emission
+                                    if query_pred_abs is not None:
+                                        acc_curve = np.exp(-0.5 * ((wavelength - float(query_pred_abs)) / 25) ** 2)
+                                        ax.plot(wavelength, acc_curve, label=f"Acceptor Abs ({query_pred_abs:.1f} nm)", lw=2)
+                                    else:
+                                        acc_curve = None
+                                    donor_x = pred_em_float if pred_em_float is not None else ds_em_float
+                                    if donor_x is not None:
+                                        donor_curve_i = np.exp(-0.5 * ((wavelength - donor_x) / 20) ** 2)
+                                        ax.plot(wavelength, donor_curve_i, label=f"Donor Em ({donor_x:.1f} nm)", lw=2)
+                                    else:
+                                        donor_curve_i = None
+                                    if acc_curve is not None and donor_curve_i is not None:
+                                        overlap_area = np.trapz(np.minimum(donor_curve_i, acc_curve), wavelength)
+                                        overlap_pct = overlap_area / np.trapz(donor_curve_i, wavelength) * 100
+                                        ax.fill_between(wavelength, np.minimum(donor_curve_i, acc_curve), color="violet", alpha=0.3)
+                                        ax.set_title(f"Overlap ≈ {overlap_pct:.1f}% | Δλ={delta_val}")
+                                    else:
+                                        ax.set_title("Overlap: Insufficient numeric data to compute")
+
+                                ax.set_xlabel("Wavelength (nm)")
+                                ax.set_ylabel("Intensity")
+                                ax.legend()
+                                st.pyplot(fig)
 
 # Footer
 st.write("---")
-st.caption("FluroML © Pooja Sanjay Deshmukh")
+st.caption("FluroML © PDeshmukh")
