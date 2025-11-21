@@ -1,5 +1,6 @@
 import os
 import streamlit as st
+import streamlit.components.v1 as components
 from rdkit import Chem
 import joblib
 import pandas as pd
@@ -20,7 +21,50 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# Make tab labels a bit bigger & bold
+st.markdown("""
+<style>
+div[data-baseweb="tab"] > button {
+    font-size: 18px !important;
+    font-weight: 700 !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 st.title("FluroML: Molecular Fluorescence Predictor")
+
+# ----------------- RDKit.js structure viewer -----------------
+def render_structure(smiles: str, key: str, height: int = 280):
+    """Render molecule structure in-browser using RDKit.js (cloud-safe)."""
+    if not smiles:
+        return
+    safe = smiles.replace("\\", "\\\\").replace('"', '\\"')
+    html = f"""
+    <div id="mol_view_{key}">Loading structure...</div>
+    <script src="https://unpkg.com/@rdkit/rdkit/Code/MinimalLib/dist/RDKit_minimal.js"></script>
+    <script>
+      initRDKitModule().then(function(RDKit) {{
+        try {{
+          const mol = RDKit.get_mol("{safe}");
+          if (!mol) {{
+            document.getElementById("mol_view_{key}").innerHTML =
+              "<div style='color:#f97373;'>Invalid SMILES</div>";
+            return;
+          }}
+          const svg = mol.get_svg();
+          document.getElementById("mol_view_{key}").innerHTML = svg;
+          mol.delete();
+        }} catch (e) {{
+          document.getElementById("mol_view_{key}").innerHTML =
+            "<div style='color:#f97373;'>Drawing error: " + e + "</div>";
+        }}
+      }}).catch(function(e) {{
+        document.getElementById("mol_view_{key}").innerHTML =
+          "<div style='color:#f97373;'>RDKit.js failed to load.</div>";
+      }});
+    </script>
+    """
+    components.html(html, height=height, scrolling=False)
 
 # ----------------- Model loading -----------------
 @st.cache_resource
@@ -31,9 +75,9 @@ def load_model(path: str):
         st.error(f"Error loading model from {path}: {e}")
         return None
 
-model_fluorescence = load_model("best_classifier_compatible.joblib")
-model_regression   = load_model("new_best_regressor_compatible.joblib")
-model_emission     = load_model("best_regressor_emission_compatible.joblib")
+model_fluorescence = load_model("best_classifier_compatible.joblib")        # Morgan
+model_regression   = load_model("new_best_regressor_compatible.joblib")     # Absorption (MACCS pair)
+model_emission     = load_model("best_regressor_emission_compatible.joblib")# Emission (MACCS pair)
 
 # ----------------- Feature helpers -----------------
 def smiles_to_morgan(smiles: str):
@@ -43,21 +87,58 @@ def smiles_to_morgan(smiles: str):
         return None
     return dc.feat.CircularFingerprint(radius=3, size=1024).featurize([mol])[0]
 
-def smiles_to_descriptors(smiles: str):
+def smiles_to_maccs_arr(smiles: str):
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         st.error("Invalid SMILES.")
         return None
-    return pd.DataFrame(dc.feat.MACCSKeysFingerprint().featurize([mol]))
+    return dc.feat.MACCSKeysFingerprint().featurize([mol])[0]
 
-def predict(model, features):
+def smiles_to_descriptors(smiles: str):
+    """MACCS keys as DataFrame row (for older parts)."""
+    arr = smiles_to_maccs_arr(smiles)
+    if arr is None:
+        return None
+    return pd.DataFrame([arr])
+
+def make_maccs_pair(mol_smiles: str, solvent_smiles: str):
+    a = smiles_to_maccs_arr(mol_smiles)
+    b = smiles_to_maccs_arr(solvent_smiles)
+    if a is None or b is None:
+        return None
     import numpy as np
+    return np.concatenate([a, b]).reshape(1, -1)
+
+def predict_array(model, features):
+    """Model + numpy array 1xN."""
     if model is None or features is None:
         return None
-    X = features.values if isinstance(features, pd.DataFrame) else np.array(features)
+    import numpy as np
+    X = features
+    X = np.asarray(X)
     if X.ndim == 1:
         X = X.reshape(1, -1)
-    return model.predict(X)[0]
+    try:
+        pred = model.predict(X)
+    except Exception as e:
+        st.error(f"Prediction failed: {e}")
+        return None
+    return pred[0]
+
+def predict_df(model, features_df: pd.DataFrame):
+    """Model + DataFrame (for backward compatibility)."""
+    if model is None or features_df is None:
+        return None
+    import numpy as np
+    X = features_df.values
+    if X.ndim == 1:
+        X = X.reshape(1, -1)
+    try:
+        pred = model.predict(X)
+    except Exception as e:
+        st.error(f"Prediction failed: {e}")
+        return None
+    return pred[0]
 
 # ----------------- File reader -----------------
 def read_molecule_file(uploaded_file):
@@ -95,7 +176,7 @@ def load_dataset():
         st.error(f"Error loading dataset: {e}")
         return None
 
-# ----------------- Tabs (icons only here) -----------------
+# ----------------- Tabs (icons in tab bar) -----------------
 tab1, tab2, tab3, tab4 = st.tabs([
     "🔎 Fluorescence Classification",
     "📈 Absorption Max Prediction",
@@ -127,10 +208,14 @@ with tab1:
         if smiles:
             st.write(f"SMILES from drawing: `{smiles}`")
 
+    if smiles:
+        # Show structure for classification query
+        render_structure(smiles, key="clf_mol", height=260)
+
     if smiles and model_fluorescence:
         feats = smiles_to_morgan(smiles)
         if feats is not None:
-            pred = predict(model_fluorescence, feats)
+            pred = predict_array(model_fluorescence, feats)
             if pred is not None:
                 st.success("Fluorescent" if int(pred) == 1 else "Non-Fluorescent")
 
@@ -159,12 +244,14 @@ with tab2:
         if abs_smiles:
             st.write(f"SMILES from drawing: `{abs_smiles}`")
 
+    if abs_smiles:
+        # Show structure for absorption query
+        render_structure(abs_smiles, key="abs_mol", height=260)
+
     if abs_smiles and solvent and model_regression:
-        f1 = smiles_to_descriptors(abs_smiles)
-        f2 = smiles_to_descriptors(solvent)
-        if f1 is not None and f2 is not None:
-            feats = pd.concat([f1, f2], axis=1)
-            pred = predict(model_regression, feats)
+        pair_feats = make_maccs_pair(abs_smiles, solvent)
+        if pair_feats is not None:
+            pred = predict_array(model_regression, pair_feats)
             if pred is not None:
                 st.success(f"Predicted Absorption Max: {pred:.2f} nm")
 
@@ -193,58 +280,154 @@ with tab3:
         if em_smiles:
             st.write(f"SMILES from drawing: `{em_smiles}`")
 
+    if em_smiles:
+        # Show structure for emission query
+        render_structure(em_smiles, key="emi_mol", height=260)
+
     if em_smiles and solvent_em and model_emission:
-        f1 = smiles_to_descriptors(em_smiles)
-        f2 = smiles_to_descriptors(solvent_em)
-        if f1 is not None and f2 is not None:
-            feats = pd.concat([f1, f2], axis=1)
-            pred = predict(model_emission, feats)
+        pair_feats = make_maccs_pair(em_smiles, solvent_em)
+        if pair_feats is not None:
+            pred = predict_array(model_emission, pair_feats)
             if pred is not None:
                 st.success(f"Predicted Emission Max: {pred:.2f} nm")
 
 # =====================================================
-# TAB 4 – FRET Analysis
+# TAB 4 – FRET Analysis (Donor OR Acceptor mode)
 # =====================================================
 with tab4:
-    method4 = st.radio(
-        "Donor Input:",
-        ("SMILES Input", "Draw Molecule", "Upload File"),
-        key="fret_input_method"
-    )
-    donor_smiles = ""
+    st.write("Provide **Donor** or **Acceptor** molecule. "
+             "The app will predict spectra and find top 5 FRET partners from the dataset.")
 
-    if method4 == "SMILES Input":
-        donor_smiles = st.text_input("Donor SMILES", key="fret_donor_smiles")
-    elif method4 == "Upload File":
-        file4 = st.file_uploader(
-            "Upload donor", type=["smi", "mol", "sdf"], key="fret_file"
+    colD, colA = st.columns(2)
+
+    # ----- Donor input -----
+    with colD:
+        st.subheader("Donor Molecule")
+        donor_method = st.radio(
+            "Donor Input Method:",
+            ("SMILES Input", "Draw Molecule", "Upload File"),
+            key="fret_donor_method"
         )
-        if file4:
-            donor_smiles = read_molecule_file(file4) or ""
-    else:
-        donor_smiles = st_ketcher("")
-        if donor_smiles:
-            st.write(f"SMILES from drawing: `{donor_smiles}`")
+        donor_smiles = ""
 
-    if donor_smiles and model_emission:
-        df = load_dataset()
-        if df is not None and "AbsorptioMax (nm)" in df.columns:
-            f1 = smiles_to_descriptors(donor_smiles)
-            f2 = smiles_to_descriptors("O")
-            if f1 is not None and f2 is not None:
-                feats = pd.concat([f1, f2], axis=1)
-                donor_em = predict(model_emission, feats)
-                if donor_em is not None:
-                    df = df.copy()
-                    df["Δ (nm)"] = (df["AbsorptioMax (nm)"] - donor_em).abs()
-                    top5 = df.sort_values("Δ (nm)").head(5)
-                    st.write(f"Predicted donor emission: {donor_em:.2f} nm")
-                    st.markdown("**Top 5 closest FRET partners:**")
-                    st.table(top5[
-                        ["Smiles", "AbsorptioMax (nm)", "EmissionMax (nm)", "Δ (nm)"]
-                    ])
+        if donor_method == "SMILES Input":
+            donor_smiles = st.text_input("Donor SMILES", key="fret_donor_smiles_text")
+        elif donor_method == "Upload File":
+            donor_file = st.file_uploader(
+                "Upload Donor (.smi/.mol/.sdf)",
+                type=["smi", "mol", "sdf"],
+                key="fret_donor_file"
+            )
+            if donor_file:
+                donor_smiles = read_molecule_file(donor_file) or ""
         else:
-            st.error("Dataset missing 'AbsorptioMax (nm)' column.")
+            donor_smiles = st_ketcher("")
+            if donor_smiles:
+                st.write(f"Donor SMILES from drawing: `{donor_smiles}`")
+
+        if donor_smiles:
+            # Show donor structure
+            render_structure(donor_smiles, key="fret_donor_mol", height=240)
+
+    # ----- Acceptor input -----
+    with colA:
+        st.subheader("Acceptor Molecule")
+        acc_method = st.radio(
+            "Acceptor Input Method:",
+            ("SMILES Input", "Draw Molecule", "Upload File"),
+            key="fret_acceptor_method"
+        )
+        acceptor_smiles = ""
+
+        if acc_method == "SMILES Input":
+            acceptor_smiles = st.text_input("Acceptor SMILES", key="fret_acceptor_smiles_text")
+        elif acc_method == "Upload File":
+            acc_file = st.file_uploader(
+                "Upload Acceptor (.smi/.mol/.sdf)",
+                type=["smi", "mol", "sdf"],
+                key="fret_acceptor_file"
+            )
+            if acc_file:
+                acceptor_smiles = read_molecule_file(acc_file) or ""
+        else:
+            acceptor_smiles = st_ketcher("")
+            if acceptor_smiles:
+                st.write(f"Acceptor SMILES from drawing: `{acceptor_smiles}`")
+
+        if acceptor_smiles:
+            # Show acceptor structure
+            render_structure(acceptor_smiles, key="fret_acceptor_mol", height=240)
+
+    # ----- Validate mode -----
+    if not (donor_smiles or acceptor_smiles):
+        st.warning("Please provide at least a Donor or an Acceptor molecule.")
+    else:
+        if model_regression is None or model_emission is None:
+            st.error("Absorption / Emission models not loaded. Cannot perform FRET analysis.")
+        else:
+            # Determine query
+            is_donor = bool(donor_smiles)
+            query_smiles = donor_smiles if is_donor else acceptor_smiles
+            mode_text = "Donor → Find Acceptors" if is_donor else "Acceptor → Find Donors"
+            st.markdown(f"**Mode:** {mode_text}")
+
+            # Predict spectra for query (using water as solvent)
+            pair_feats = make_maccs_pair(query_smiles, "O")
+            if pair_feats is None:
+                st.error("Failed to compute MACCS pair features for query.")
+            else:
+                with st.spinner("Predicting query spectra..."):
+                    pred_abs = predict_array(model_regression, pair_feats)
+                    pred_em  = predict_array(model_emission, pair_feats)
+
+                if pred_abs is None or pred_em is None:
+                    st.error("Spectral prediction failed.")
+                else:
+                    if is_donor:
+                        st.success(f"Predicted Donor Absorption: {pred_abs:.2f} nm")
+                        st.success(f"Predicted Donor Emission: {pred_em:.2f} nm")
+                    else:
+                        st.success(f"Predicted Acceptor Absorption: {pred_abs:.2f} nm")
+                        st.success(f"Predicted Acceptor Emission: {pred_em:.2f} nm")
+
+                    # Load dataset
+                    df = load_dataset()
+                    if df is None:
+                        st.error("Dataset not available for FRET analysis.")
+                    else:
+                        required = {"Smiles", "AbsorptioMax (nm)", "EmissionMax (nm)", "Fluorescent labeling"}
+                        if not required.issubset(df.columns):
+                            st.error("Dataset missing required FRET columns.")
+                        else:
+                            # Use only fluorescent entries, and drop self
+                            df_f = df[df["Fluorescent labeling"].astype(str).str.lower().isin(["yes","true","1"])].copy()
+                            df_f = df_f[df_f["Smiles"] != query_smiles]
+
+                            if df_f.empty:
+                                st.warning("No fluorescent partners found in dataset.")
+                            else:
+                                # Compute Δ based on mode
+                                if is_donor:
+                                    # donor emission vs acceptor absorption
+                                    df_f["Δ (nm)"] = (df_f["AbsorptioMax (nm)"] - pred_em).abs()
+                                else:
+                                    # acceptor absorption vs donor emission
+                                    df_f["Δ (nm)"] = (df_f["EmissionMax (nm)"] - pred_abs).abs()
+
+                                top5 = df_f.sort_values("Δ (nm)").head(5).reset_index(drop=True)
+
+                                # Build a compact result table
+                                results = pd.DataFrame({
+                                    "Dataset SMILES": top5["Smiles"],
+                                    "Dataset Absorption (nm)": top5["AbsorptioMax (nm)"],
+                                    "Dataset Emission (nm)": top5["EmissionMax (nm)"],
+                                    "Δ (nm)": top5["Δ (nm)"],
+                                    "Predicted Query Absorption (nm)": [pred_abs] * len(top5),
+                                    "Predicted Query Emission (nm)": [pred_em] * len(top5),
+                                })
+
+                                st.markdown("**Top 5 FRET Partner Candidates:**")
+                                st.dataframe(results, use_container_width=True)
 
 # ----------------- Footer -----------------
 st.write("---")
