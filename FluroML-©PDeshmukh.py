@@ -95,20 +95,18 @@ def load_dataset():
         st.error(f"Error loading dataset: {e}")
         return None
 
-# ----------------- Tabs -----------------
+# ----------------- Tabs (icons only here) -----------------
 tab1, tab2, tab3, tab4 = st.tabs([
-    "Fluorescence Classification",
-    "Absorption Max Prediction",
-    "Emission Max Prediction",
-    "FRET Analysis"
+    "🔎 Fluorescence Classification",
+    "📈 Absorption Max Prediction",
+    "📈 Emission Max Prediction",
+    "🔗 FRET Analysis"
 ])
 
 # =====================================================
 # TAB 1 – Fluorescence Classification
 # =====================================================
 with tab1:
-    st.header("🔎 Fluorescence Classification")
-
     method = st.radio(
         "Input Method:",
         ("SMILES Input", "Draw Molecule", "Upload File"),
@@ -140,8 +138,6 @@ with tab1:
 # TAB 2 – Absorption Max Prediction
 # =====================================================
 with tab2:
-    st.header("📈 Absorption Max Prediction")
-
     method2 = st.radio(
         "Input Method:",
         ("SMILES Input", "Draw Molecule", "Upload File"),
@@ -176,8 +172,6 @@ with tab2:
 # TAB 3 – Emission Max Prediction
 # =====================================================
 with tab3:
-    st.header("📈 Emission Max Prediction")
-
     method3 = st.radio(
         "Input Method:",
         ("SMILES Input", "Draw Molecule", "Upload File"),
@@ -212,8 +206,6 @@ with tab3:
 # TAB 4 – FRET Analysis
 # =====================================================
 with tab4:
-    st.header("🔗 FRET Pair Analysis")
-
     method4 = st.radio(
         "Donor Input:",
         ("SMILES Input", "Draw Molecule", "Upload File"),
@@ -247,8 +239,10 @@ with tab4:
                     df["Δ (nm)"] = (df["AbsorptioMax (nm)"] - donor_em).abs()
                     top5 = df.sort_values("Δ (nm)").head(5)
                     st.write(f"Predicted donor emission: {donor_em:.2f} nm")
-                    st.markdown("**Top 5 closest FRET partners (by absorption match):**")
-                    st.table(top5[["Smiles", "AbsorptioMax (nm)", "EmissionMax (nm)", "Δ (nm)"]])
+                    st.markdown("**Top 5 closest FRET partners:**")
+                    st.table(top5[
+                        ["Smiles", "AbsorptioMax (nm)", "EmissionMax (nm)", "Δ (nm)"]
+                    ])
         else:
             st.error("Dataset missing 'AbsorptioMax (nm)' column.")
 
