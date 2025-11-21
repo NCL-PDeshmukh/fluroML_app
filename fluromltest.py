@@ -5,62 +5,101 @@ from rdkit import Chem
 import joblib
 import pandas as pd
 import deepchem as dc
-from PIL import Image
 
-# ---------------------------------------------------
-# Ketcher integration
-# ---------------------------------------------------
-try:
-    from streamlit_ketcher import st_ketcher
-except ImportError:
-    def st_ketcher(*args, **kwargs):
-        st.warning("streamlit-ketcher is not installed. Please install it to draw molecules.")
-        return ""
-
-# ---------------------------------------------------
-# Streamlit page config
-# ---------------------------------------------------
+# ======================================================
+# PAGE CONFIG
+# ======================================================
 st.set_page_config(
     page_title="FluroML - Molecular Fluorescence Predictor",
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# ---------- Global neon / dark scientific theme ----------
+st.markdown(
+    """
+    <style>
+    /* App background */
+    .stApp {
+        background: radial-gradient(circle at top, #050816 0, #020617 40%, #000 100%);
+        color: #e5e7eb;
+        font-family: "Segoe UI", system-ui, sans-serif;
+    }
+    /* Tweak default text */
+    h1, h2, h3, h4 {
+        color: #e5e7eb !important;
+    }
+    .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 2rem;
+        max-width: 1200px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.title("FluroML: Molecular Fluorescence Predictor")
 
-# ---------------------------------------------------
-# Logo loader  (YOU: put these PNGs in the same folder)
-#   logo_classification.png -> magnifying glass + bars
-#   logo_spectra.png        -> fluorescence spectrum
-#   logo_fret.png           -> D-A FRET cartoon
-# ---------------------------------------------------
-def load_logo(path: str):
-    if os.path.exists(path):
-        try:
-            return Image.open(path)
-        except Exception:
-            return None
-    return None
+# ======================================================
+# KETCHER INTEGRATION
+# ======================================================
+try:
+    from streamlit_ketcher import st_ketcher
+except ImportError:
+    def st_ketcher(*args, **kwargs):
+        st.warning("⚠️ streamlit-ketcher is not installed. Please install it to draw molecules.")
+        return ""
 
-logo_classification = load_logo("logo_classification.png")
-logo_spectra        = load_logo("logo_spectra.png")
-logo_fret           = load_logo("logo_fret.png")
+# ======================================================
+# NEON GRADIENT HEADER HELPER
+# ======================================================
+def neon_header(icon: str, title: str, gradient: str):
+    """
+    icon: emoji like 🔎, 📈, 🔗
+    title: header text
+    gradient: CSS linear-gradient string
+    """
+    st.markdown(
+        f"""
+        <div style="
+            margin: 0.3rem 0 1rem 0;
+            padding: 0.75rem 1.1rem;
+            border-radius: 14px;
+            background: {gradient};
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 0 18px rgba(56,189,248,0.55);
+            border: 1px solid rgba(148,163,184,0.4);
+        ">
+            <div style="font-size: 1.7rem;">{icon}</div>
+            <div style="font-size: 1.1rem; font-weight: 600; letter-spacing: 0.02em;">
+                {title}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
-# ---------------------------------------------------
-# RDKit.js viewer (client-side drawing, cloud-safe)
-# ---------------------------------------------------
-def rdkit_viewer(smiles: str, key: str, height: int = 320):
+# ======================================================
+# RDKit.js VIEWER (NO SERVER-SIDE DRAWING)
+# ======================================================
+def rdkit_viewer(smiles: str, key: str, height: int = 300):
+    """Render molecule using RDKit.js (client-side, cloud-safe)."""
     if not smiles:
         return
     safe = smiles.replace("\\", "\\\\").replace('"', '\\"')
     html = f"""
-    <div id="rdkit_{key}">Loading structure...</div>
+    <div id="rdkit_{key}" style="background: #020617; border-radius: 10px; padding: 8px;"></div>
     <script src="https://unpkg.com/@rdkit/rdkit/Code/MinimalLib/dist/RDKit_minimal.js"></script>
     <script>
       initRDKitModule().then(function(RDKit) {{
         try {{
           var mol = RDKit.get_mol("{safe}");
           if (!mol) {{
-            document.getElementById("rdkit_{key}").innerHTML = "<div>Invalid SMILES</div>";
+            document.getElementById("rdkit_{key}").innerHTML =
+              "<div style='color:#f97373;'>Invalid SMILES</div>";
             return;
           }}
           var svg = mol.get_svg();
@@ -68,19 +107,19 @@ def rdkit_viewer(smiles: str, key: str, height: int = 320):
           mol.delete();
         }} catch (e) {{
           document.getElementById("rdkit_{key}").innerHTML =
-            "<div style='color:red'>Drawing error: " + e + "</div>";
+            "<div style='color:#f97373;'>Drawing error: " + e + "</div>";
         }}
       }}).catch(function(e){{
         document.getElementById("rdkit_{key}").innerHTML =
-          "<div style='color:red'>RDKit.js failed to load.</div>";
+          "<div style='color:#f97373;'>RDKit.js failed to load.</div>";
       }});
     </script>
     """
     components.html(html, height=height, scrolling=False)
 
-# ---------------------------------------------------
-# Models (cached)
-# ---------------------------------------------------
+# ======================================================
+# MODEL LOADING
+# ======================================================
 @st.cache_resource
 def load_model(path: str):
     try:
@@ -93,10 +132,11 @@ model_fluorescence = load_model("best_classifier_compatible.joblib")
 model_regression   = load_model("new_best_regressor_compatible.joblib")
 model_emission     = load_model("best_regressor_emission_compatible.joblib")
 
-# ---------------------------------------------------
-# Featurization + prediction helpers
-# ---------------------------------------------------
+# ======================================================
+# FEATURE / PREDICTION HELPERS
+# ======================================================
 def smiles_to_morgan(smiles: str):
+    """Morgan fingerprint (1024) for classifier."""
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         st.error("Invalid SMILES string.")
@@ -109,6 +149,7 @@ def smiles_to_morgan(smiles: str):
         return None
 
 def smiles_to_descriptors(smiles: str):
+    """MACCS keys DataFrame row, for regression models."""
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         st.error("Invalid SMILES string.")
@@ -122,6 +163,7 @@ def smiles_to_descriptors(smiles: str):
     return pd.DataFrame(features)
 
 def predict(model, features):
+    """Safe prediction wrapper."""
     if model is None or features is None:
         return None
     import numpy as np
@@ -135,10 +177,11 @@ def predict(model, features):
         return None
     return pred[0] if hasattr(pred, "__len__") and not isinstance(pred, str) else pred
 
-# ---------------------------------------------------
-# File reader for molecule files
-# ---------------------------------------------------
+# ======================================================
+# MOLECULE FILE READER
+# ======================================================
 def read_molecule_file(uploaded_file):
+    """Read .smi / .mol / .sdf and return first SMILES."""
     filename = uploaded_file.name
     data = uploaded_file.getvalue()
     text = data.decode("utf-8", errors="ignore")
@@ -165,9 +208,9 @@ def read_molecule_file(uploaded_file):
     st.error("Unsupported file format.")
     return None
 
-# ---------------------------------------------------
-# Dataset for FRET
-# ---------------------------------------------------
+# ======================================================
+# DATASET FOR FRET
+# ======================================================
 @st.cache_data
 def load_dataset():
     try:
@@ -176,9 +219,9 @@ def load_dataset():
         st.error(f"Error loading dataset: {e}")
         return None
 
-# ---------------------------------------------------
-# Tabs
-# ---------------------------------------------------
+# ======================================================
+# TABS
+# ======================================================
 tab1, tab2, tab3, tab4 = st.tabs([
     "Fluorescence Classification",
     "Absorption Max Prediction",
@@ -186,16 +229,15 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "FRET Analysis"
 ])
 
-# ===================================================
-# TAB 1 – Fluorescence Classification (search-style logo)
-# ===================================================
+# ======================================================
+# TAB 1 – Fluorescence Classification
+# ======================================================
 with tab1:
-    icon_col, text_col = st.columns([1, 4])
-    with icon_col:
-        if logo_classification is not None:
-            st.image(logo_classification, use_column_width=True)
-    with text_col:
-        st.markdown("## Fluorescence Classification")
+    neon_header(
+        "🔎",
+        "Fluorescence Classification",
+        "linear-gradient(90deg, #22d3ee, #4f46e5)"
+    )
 
     input_method = st.radio(
         "Input Method:",
@@ -231,16 +273,15 @@ with tab1:
                 if pred is not None:
                     st.success("Fluorescent" if int(pred) == 1 else "Non-Fluorescent")
 
-# ===================================================
-# TAB 2 – Absorption Max (spectra logo)
-# ===================================================
+# ======================================================
+# TAB 2 – Absorption Max Prediction
+# ======================================================
 with tab2:
-    icon_col, text_col = st.columns([1, 4])
-    with icon_col:
-        if logo_spectra is not None:
-            st.image(logo_spectra, use_column_width=True)
-    with text_col:
-        st.markdown("## Absorption Max Prediction (λ_ex)")
+    neon_header(
+        "📈",
+        "Absorption Max Prediction (λ_ex)",
+        "linear-gradient(90deg, #38bdf8, #a855f7)"
+    )
 
     input_method2 = st.radio(
         "Input Method:",
@@ -284,16 +325,15 @@ with tab2:
                 if pred is not None:
                     st.success(f"Predicted Absorption Max: {pred:.2f} nm")
 
-# ===================================================
-# TAB 3 – Emission Max (same spectra logo)
-# ===================================================
+# ======================================================
+# TAB 3 – Emission Max Prediction
+# ======================================================
 with tab3:
-    icon_col, text_col = st.columns([1, 4])
-    with icon_col:
-        if logo_spectra is not None:
-            st.image(logo_spectra, use_column_width=True)
-    with text_col:
-        st.markdown("## Emission Max Prediction (λ_em)")
+    neon_header(
+        "📈",
+        "Emission Max Prediction (λ_em)",
+        "linear-gradient(90deg, #f97316, #ec4899)"
+    )
 
     input_method3 = st.radio(
         "Input Method:",
@@ -337,16 +377,15 @@ with tab3:
                 if pred is not None:
                     st.success(f"Predicted Emission Max: {pred:.2f} nm")
 
-# ===================================================
-# TAB 4 – FRET Analysis (D–A FRET logo)
-# ===================================================
+# ======================================================
+# TAB 4 – FRET Analysis
+# ======================================================
 with tab4:
-    icon_col, text_col = st.columns([1, 4])
-    with icon_col:
-        if logo_fret is not None:
-            st.image(logo_fret, use_column_width=True)
-    with text_col:
-        st.markdown("## FRET Pair Analysis (Donor → Acceptor)")
+    neon_header(
+        "🔗",
+        "FRET Pair Analysis (Donor → Acceptor)",
+        "linear-gradient(90deg, #22c55e, #0ea5e9)"
+    )
 
     input_method4 = st.radio(
         "Donor Input Method:",
@@ -460,6 +499,8 @@ with tab4:
                                 st.markdown("**Top 5 FRET Partner Candidates:**")
                                 st.table(top5.reset_index(drop=True))
 
-# Footer
+# ======================================================
+# FOOTER
+# ======================================================
 st.write("---")
-st.caption("FluroML-©PDeshmukh")
+st.caption("FluroML © PDeshmukh")
