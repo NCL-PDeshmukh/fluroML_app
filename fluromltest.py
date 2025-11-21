@@ -7,7 +7,9 @@ import pandas as pd
 import deepchem as dc
 from PIL import Image
 
-# Try to import streamlit_ketcher for drawing
+# ---------------------------------------------------
+# Ketcher integration
+# ---------------------------------------------------
 try:
     from streamlit_ketcher import st_ketcher
 except ImportError:
@@ -15,19 +17,22 @@ except ImportError:
         st.warning("streamlit-ketcher is not installed. Please install it to draw molecules.")
         return ""
 
-# ---------------------------
-# Streamlit app configuration
-# ---------------------------
+# ---------------------------------------------------
+# Streamlit page config
+# ---------------------------------------------------
 st.set_page_config(
-    page_title="FluroML - Molecular Prediction",
+    page_title="FluroML - Molecular Fluorescence Predictor",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 st.title("FluroML: Molecular Fluorescence Predictor")
 
-# ---------------------------
-# Logo loader (optional)
-# ---------------------------
+# ---------------------------------------------------
+# Logo loader  (YOU: put these PNGs in the same folder)
+#   logo_classification.png -> magnifying glass + bars
+#   logo_spectra.png        -> fluorescence spectrum
+#   logo_fret.png           -> D-A FRET cartoon
+# ---------------------------------------------------
 def load_logo(path: str):
     if os.path.exists(path):
         try:
@@ -40,14 +45,10 @@ logo_classification = load_logo("logo_classification.png")
 logo_spectra        = load_logo("logo_spectra.png")
 logo_fret           = load_logo("logo_fret.png")
 
-# ---------------------------
-# RDKit.js viewer (no server-side graphics)
-# ---------------------------
+# ---------------------------------------------------
+# RDKit.js viewer (client-side drawing, cloud-safe)
+# ---------------------------------------------------
 def rdkit_viewer(smiles: str, key: str, height: int = 320):
-    """
-    Use RDKit.js in the browser to render an SVG.
-    Works on Streamlit Cloud (no libXrender needed).
-    """
     if not smiles:
         return
     safe = smiles.replace("\\", "\\\\").replace('"', '\\"')
@@ -66,23 +67,24 @@ def rdkit_viewer(smiles: str, key: str, height: int = 320):
           document.getElementById("rdkit_{key}").innerHTML = svg;
           mol.delete();
         }} catch (e) {{
-          document.getElementById("rdkit_{key}").innerHTML = "<div style='color:red'>Drawing error: " + e + "</div>";
+          document.getElementById("rdkit_{key}").innerHTML =
+            "<div style='color:red'>Drawing error: " + e + "</div>";
         }}
       }}).catch(function(e){{
-        document.getElementById("rdkit_{key}").innerHTML = "<div style='color:red'>RDKit.js failed to load.</div>";
+        document.getElementById("rdkit_{key}").innerHTML =
+          "<div style='color:red'>RDKit.js failed to load.</div>";
       }});
     </script>
     """
     components.html(html, height=height, scrolling=False)
 
-# ---------------------------
-# Load Models with caching
-# ---------------------------
+# ---------------------------------------------------
+# Models (cached)
+# ---------------------------------------------------
 @st.cache_resource
 def load_model(path: str):
     try:
-        model = joblib.load(path)
-        return model
+        return joblib.load(path)
     except Exception as e:
         st.error(f"Error loading model from {path}: {e}")
         return None
@@ -91,25 +93,22 @@ model_fluorescence = load_model("best_classifier_compatible.joblib")
 model_regression   = load_model("new_best_regressor_compatible.joblib")
 model_emission     = load_model("best_regressor_emission_compatible.joblib")
 
-# ---------------------------
-# Helper functions
-# ---------------------------
+# ---------------------------------------------------
+# Featurization + prediction helpers
+# ---------------------------------------------------
 def smiles_to_morgan(smiles: str):
-    """Convert SMILES to Morgan fingerprint vector."""
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         st.error("Invalid SMILES string.")
         return None
     featurizer = dc.feat.CircularFingerprint(radius=3, size=1024)
     try:
-        features = featurizer.featurize([mol])[0]  # numpy array (1024,)
+        return featurizer.featurize([mol])[0]
     except Exception as fe:
         st.error(f"Failed to featurize molecule: {fe}")
         return None
-    return features
 
 def smiles_to_descriptors(smiles: str):
-    """Convert SMILES to MACCS key descriptors (returns a DataFrame row)."""
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         st.error("Invalid SMILES string.")
@@ -123,7 +122,6 @@ def smiles_to_descriptors(smiles: str):
     return pd.DataFrame(features)
 
 def predict(model, features):
-    """Make a prediction using a trained model and feature vector."""
     if model is None or features is None:
         return None
     import numpy as np
@@ -137,49 +135,39 @@ def predict(model, features):
         return None
     return pred[0] if hasattr(pred, "__len__") and not isinstance(pred, str) else pred
 
+# ---------------------------------------------------
+# File reader for molecule files
+# ---------------------------------------------------
 def read_molecule_file(uploaded_file):
-    """Read a molecule file (.mol, .sdf, .smi) and return a SMILES string."""
     filename = uploaded_file.name
     data = uploaded_file.getvalue()
     text = data.decode("utf-8", errors="ignore")
 
-    if filename.lower().endswith('.smi'):
+    if filename.lower().endswith(".smi"):
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         if not lines:
             st.error("SMI file is empty or invalid.")
             return None
-        smiles = lines[0].split()[0]
-        if len(lines) > 1:
-            st.info("Multiple SMILES in file; using the first entry.")
-        return smiles
+        return lines[0].split()[0]
 
-    elif filename.lower().endswith('.mol'):
+    if filename.lower().endswith(".mol"):
         mol = Chem.MolFromMolBlock(text)
-        if mol is None:
-            st.error("Failed to parse MOL file.")
-            return None
-        return Chem.MolToSmiles(mol)
+        return Chem.MolToSmiles(mol) if mol else None
 
-    elif filename.lower().endswith('.sdf'):
-        entries = [entry for entry in text.split('$$$$') if entry.strip()]
-        if len(entries) == 0:
+    if filename.lower().endswith(".sdf"):
+        entries = [entry for entry in text.split("$$$$") if entry.strip()]
+        if not entries:
             st.error("No molecules found in SDF file.")
             return None
         mol = Chem.MolFromMolBlock(entries[0])
-        if mol is None:
-            st.error("Failed to parse SDF file.")
-            return None
-        if len(entries) > 1:
-            st.info("Multiple molecules in SDF; using the first one.")
-        return Chem.MolToSmiles(mol)
+        return Chem.MolToSmiles(mol) if mol else None
 
-    else:
-        st.error("Unsupported file format.")
-        return None
+    st.error("Unsupported file format.")
+    return None
 
-# ---------------------------
-# Cache dataset loading for FRET analysis
-# ---------------------------
+# ---------------------------------------------------
+# Dataset for FRET
+# ---------------------------------------------------
 @st.cache_data
 def load_dataset():
     try:
@@ -188,9 +176,9 @@ def load_dataset():
         st.error(f"Error loading dataset: {e}")
         return None
 
-# ---------------------------
+# ---------------------------------------------------
 # Tabs
-# ---------------------------
+# ---------------------------------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
     "Fluorescence Classification",
     "Absorption Max Prediction",
@@ -198,18 +186,16 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "FRET Analysis"
 ])
 
-# ===========================
-# Tab 1: Fluorescence Classification
-# ===========================
+# ===================================================
+# TAB 1 – Fluorescence Classification (search-style logo)
+# ===================================================
 with tab1:
-    col_logo, col_title = st.columns([1, 4])
-    with col_logo:
+    icon_col, text_col = st.columns([1, 4])
+    with icon_col:
         if logo_classification is not None:
             st.image(logo_classification, use_column_width=True)
-        else:
-            st.caption("logo_classification.png not found.")
-    with col_title:
-        st.markdown("## ΦF · Fluorescence Classification")
+    with text_col:
+        st.markdown("## Fluorescence Classification")
 
     input_method = st.radio(
         "Input Method:",
@@ -228,37 +214,33 @@ with tab1:
         )
         if file:
             smiles = read_molecule_file(file) or ""
-    else:  # Draw Molecule (Ketcher)
+    else:
         smiles = st_ketcher("")
         if smiles:
             st.write(f"**SMILES from drawing:** `{smiles}`")
 
     if smiles:
-        rdkit_viewer(smiles, key="clf_view")
+        rdkit_viewer(smiles, key="clf_view", height=260)
         if model_fluorescence is None:
             st.error("Fluorescence classification model is not loaded.")
         else:
-            features = smiles_to_morgan(smiles)
-            if features is not None:
+            feats = smiles_to_morgan(smiles)
+            if feats is not None:
                 with st.spinner("Predicting fluorescence..."):
-                    prediction = predict(model_fluorescence, features)
-                if prediction is None:
-                    st.error("Prediction could not be made.")
-                else:
-                    st.success("Fluorescent" if int(prediction) == 1 else "Non-Fluorescent")
+                    pred = predict(model_fluorescence, feats)
+                if pred is not None:
+                    st.success("Fluorescent" if int(pred) == 1 else "Non-Fluorescent")
 
-# ===========================
-# Tab 2: Absorption Max Prediction
-# ===========================
+# ===================================================
+# TAB 2 – Absorption Max (spectra logo)
+# ===================================================
 with tab2:
-    col_logo, col_title = st.columns([1, 4])
-    with col_logo:
+    icon_col, text_col = st.columns([1, 4])
+    with icon_col:
         if logo_spectra is not None:
             st.image(logo_spectra, use_column_width=True)
-        else:
-            st.caption("logo_spectra.png not found.")
-    with col_title:
-        st.markdown("## λ_ex · Absorption Max Prediction")
+    with text_col:
+        st.markdown("## Absorption Max Prediction (λ_ex)")
 
     input_method2 = st.radio(
         "Input Method:",
@@ -283,39 +265,35 @@ with tab2:
             st.write(f"**SMILES from drawing:** `{abs_smiles}`")
 
     solvent = st.text_input(
-        "Enter Solvent SMILES (e.g., 'O' for water):",
-        key="absorption_solvent",
-        value="O"
+        "Solvent SMILES (e.g., 'O' for water):",
+        value="O",
+        key="absorption_solvent"
     )
 
     if abs_smiles and solvent:
-        rdkit_viewer(abs_smiles, key="abs_view")
+        rdkit_viewer(abs_smiles, key="abs_view", height=260)
         if model_regression is None:
             st.error("Absorption prediction model is not loaded.")
         else:
             desc_smiles = smiles_to_descriptors(abs_smiles)
             desc_solvent = smiles_to_descriptors(solvent)
             if desc_smiles is not None and desc_solvent is not None:
-                features = pd.concat([desc_smiles, desc_solvent], axis=1)
+                feats = pd.concat([desc_smiles, desc_solvent], axis=1)
                 with st.spinner("Predicting absorption maximum..."):
-                    prediction = predict(model_regression, features)
-                if prediction is not None:
-                    st.success(f"Predicted Absorption Max: {prediction:.2f} nm")
-                else:
-                    st.error("Prediction could not be made.")
+                    pred = predict(model_regression, feats)
+                if pred is not None:
+                    st.success(f"Predicted Absorption Max: {pred:.2f} nm")
 
-# ===========================
-# Tab 3: Emission Max Prediction
-# ===========================
+# ===================================================
+# TAB 3 – Emission Max (same spectra logo)
+# ===================================================
 with tab3:
-    col_logo, col_title = st.columns([1, 4])
-    with col_logo:
+    icon_col, text_col = st.columns([1, 4])
+    with icon_col:
         if logo_spectra is not None:
             st.image(logo_spectra, use_column_width=True)
-        else:
-            st.caption("logo_spectra.png not found.")
-    with col_title:
-        st.markdown("## λ_em · Emission Max Prediction")
+    with text_col:
+        st.markdown("## Emission Max Prediction (λ_em)")
 
     input_method3 = st.radio(
         "Input Method:",
@@ -340,39 +318,35 @@ with tab3:
             st.write(f"**SMILES from drawing:** `{em_smiles}`")
 
     solvent_em = st.text_input(
-        "Enter Solvent SMILES (e.g., 'O' for water):",
-        key="emission_solvent",
-        value="O"
+        "Solvent SMILES (e.g., 'O' for water):",
+        value="O",
+        key="emission_solvent"
     )
 
     if em_smiles and solvent_em:
-        rdkit_viewer(em_smiles, key="em_view")
+        rdkit_viewer(em_smiles, key="em_view", height=260)
         if model_emission is None:
             st.error("Emission prediction model is not loaded.")
         else:
             desc_smiles = smiles_to_descriptors(em_smiles)
             desc_solvent = smiles_to_descriptors(solvent_em)
             if desc_smiles is not None and desc_solvent is not None:
-                features = pd.concat([desc_smiles, desc_solvent], axis=1)
+                feats = pd.concat([desc_smiles, desc_solvent], axis=1)
                 with st.spinner("Predicting emission maximum..."):
-                    prediction = predict(model_emission, features)
-                if prediction is not None:
-                    st.success(f"Predicted Emission Max: {prediction:.2f} nm")
-                else:
-                    st.error("Prediction could not be made.")
+                    pred = predict(model_emission, feats)
+                if pred is not None:
+                    st.success(f"Predicted Emission Max: {pred:.2f} nm")
 
-# ===========================
-# Tab 4: FRET Analysis
-# ===========================
+# ===================================================
+# TAB 4 – FRET Analysis (D–A FRET logo)
+# ===================================================
 with tab4:
-    col_logo, col_title = st.columns([1, 4])
-    with col_logo:
+    icon_col, text_col = st.columns([1, 4])
+    with icon_col:
         if logo_fret is not None:
             st.image(logo_fret, use_column_width=True)
-        else:
-            st.caption("logo_fret.png not found.")
-    with col_title:
-        st.markdown("## D→A · FRET Pair Analysis")
+    with text_col:
+        st.markdown("## FRET Pair Analysis (Donor → Acceptor)")
 
     input_method4 = st.radio(
         "Donor Input Method:",
@@ -382,7 +356,9 @@ with tab4:
 
     donor_smiles = ""
     if input_method4 == "SMILES Input":
-        donor_smiles = st.text_input("Enter Donor Molecule SMILES:", key="fret_donor_smiles")
+        donor_smiles = st.text_input(
+            "Enter Donor Molecule SMILES:", key="fret_donor_smiles"
+        )
     elif input_method4 == "Upload File":
         file4 = st.file_uploader(
             "Upload a donor molecule file (.smi, .mol, .sdf):",
@@ -397,7 +373,8 @@ with tab4:
             st.write(f"**SMILES from drawing:** `{donor_smiles}`")
 
     if donor_smiles:
-        rdkit_viewer(donor_smiles, key="fret_view")
+        rdkit_viewer(donor_smiles, key="fret_view", height=260)
+
         if model_emission is None:
             st.error("Emission prediction model not loaded. Cannot perform FRET analysis.")
         else:
@@ -405,7 +382,9 @@ with tab4:
             if df is None:
                 st.error("Dataset could not be loaded for FRET analysis.")
             else:
-                required_cols = {"Smiles", "AbsorptioMax (nm)", "EmissionMax (nm)", "Fluorescent labeling"}
+                required_cols = {
+                    "Smiles", "AbsorptioMax (nm)", "EmissionMax (nm)", "Fluorescent labeling"
+                }
                 if not required_cols.issubset(df.columns):
                     st.error("Dataset is missing required columns for FRET analysis.")
                 else:
@@ -414,75 +393,72 @@ with tab4:
                     if donor_desc is None or solvent_desc is None:
                         st.error("Failed to featurize donor or solvent.")
                     else:
-                        features = pd.concat([donor_desc, solvent_desc], axis=1)
-                        with st.spinner("Searching for optimal FRET acceptor..."):
-                            donor_emission = predict(model_emission, features)
+                        feats = pd.concat([donor_desc, solvent_desc], axis=1)
+                        with st.spinner("Predicting donor emission and scanning acceptors..."):
+                            donor_emission = predict(model_emission, feats)
 
                         if donor_emission is None:
                             st.error("Failed to predict donor emission.")
                         else:
                             df_candidates = df[
-                                df['Fluorescent labeling'].astype(str).str.lower().isin(["yes", "true", "1"])
+                                df["Fluorescent labeling"].astype(str).str.lower().isin(
+                                    ["yes", "true", "1"]
+                                )
                             ].copy()
-                            df_candidates = df_candidates[df_candidates['AbsorptioMax (nm)'].notna()]
-                            df_candidates = df_candidates[df_candidates['Smiles'] != donor_smiles]
+                            df_candidates = df_candidates[df_candidates["AbsorptioMax (nm)"].notna()]
+                            df_candidates = df_candidates[df_candidates["Smiles"] != donor_smiles]
 
                             if df_candidates.empty:
                                 st.error("No suitable acceptor candidates found.")
                             else:
-                                df_candidates['abs_diff'] = (
-                                    df_candidates['AbsorptioMax (nm)'] - donor_emission
+                                df_candidates["abs_diff"] = (
+                                    df_candidates["AbsorptioMax (nm)"] - donor_emission
                                 ).abs()
 
                                 best_per_smiles = df_candidates.loc[
-                                    df_candidates.groupby('Smiles')['abs_diff'].idxmin()
+                                    df_candidates.groupby("Smiles")["abs_diff"].idxmin()
                                 ]
-                                best_per_smiles = best_per_smiles.sort_values('abs_diff').reset_index(drop=True)
+                                best_per_smiles = best_per_smiles.sort_values("abs_diff").reset_index(drop=True)
 
                                 top_match = best_per_smiles.iloc[0]
-                                best_smiles = top_match['Smiles']
-                                best_abs = float(top_match['AbsorptioMax (nm)'])
-                                best_em = float(top_match['EmissionMax (nm)']) if pd.notna(
-                                    top_match['EmissionMax (nm)']) else None
+                                best_smiles = top_match["Smiles"]
+                                best_abs = float(top_match["AbsorptioMax (nm)"])
+                                best_em = (
+                                    float(top_match["EmissionMax (nm)"])
+                                    if pd.notna(top_match["EmissionMax (nm)"])
+                                    else None
+                                )
 
-                                # Simplified FRET efficiency estimation
                                 fret_eff = (best_abs / (donor_emission + best_abs)) * 100
 
-                                col1, col2 = st.columns(2)
-                                with col1:
-                                    rdkit_viewer(donor_smiles, key="fret_donor_view", height=260)
+                                c1, c2 = st.columns(2)
+                                with c1:
+                                    rdkit_viewer(donor_smiles, key="fret_donor_view", height=240)
                                     st.write(f"**Predicted Donor Emission Max:** {donor_emission:.2f} nm")
-                                with col2:
-                                    rdkit_viewer(best_smiles, key="fret_acceptor_view", height=260)
-                                    st.write(f"**Acceptor Absorption Max:** {best_abs:.2f} nm")
+                                with c2:
+                                    rdkit_viewer(best_smiles, key="fret_acceptor_view", height=240)
+                                    st.write(f"**Top Acceptor Absorption Max:** {best_abs:.2f} nm")
                                     if best_em is not None:
-                                        st.write(f"**Acceptor Emission Max:** {best_em:.2f} nm")
+                                        st.write(f"**Top Acceptor Emission Max:** {best_em:.2f} nm")
                                     st.write(f"**Estimated FRET Efficiency:** {fret_eff:.2f}%")
 
-                                # Top 5 closest matches
-                                top_n = 5
-                                top_candidates = best_per_smiles.head(top_n)[
-                                    ['Smiles', 'AbsorptioMax (nm)', 'EmissionMax (nm)', 'abs_diff']
+                                top5 = best_per_smiles.head(5)[
+                                    ["Smiles", "AbsorptioMax (nm)", "EmissionMax (nm)", "abs_diff"]
                                 ].copy()
-                                top_candidates.rename(columns={
-                                    'Smiles': 'Acceptor SMILES',
-                                    'AbsorptioMax (nm)': 'Absorption (nm)',
-                                    'EmissionMax (nm)': 'Emission (nm)',
-                                    'abs_diff': 'Δ (nm)'
+                                top5.rename(columns={
+                                    "Smiles": "Acceptor SMILES",
+                                    "AbsorptioMax (nm)": "Absorption (nm)",
+                                    "EmissionMax (nm)": "Emission (nm)",
+                                    "abs_diff": "Δ (nm)"
                                 }, inplace=True)
+                                top5["Absorption (nm)"] = top5["Absorption (nm)"].map(lambda x: f"{x:.2f}")
+                                top5["Emission (nm)"] = top5["Emission (nm)"].map(
+                                    lambda x: f"{x:.2f}" if str(x) != "nan" else "N/A"
+                                )
+                                top5["Δ (nm)"] = top5["Δ (nm)"].map(lambda x: f"{x:.2f}")
 
-                                top_candidates['Absorption (nm)'] = top_candidates['Absorption (nm)'].map(
-                                    lambda x: f"{x:.2f}"
-                                )
-                                top_candidates['Emission (nm)'] = top_candidates['Emission (nm)'].map(
-                                    lambda x: f"{x:.2f}" if str(x) != 'nan' else "N/A"
-                                )
-                                top_candidates['Δ (nm)'] = top_candidates['Δ (nm)'].map(
-                                    lambda x: f"{x:.2f}"
-                                )
-
-                                st.markdown("**Top 5 Closest Matches:**")
-                                st.table(top_candidates.reset_index(drop=True))
+                                st.markdown("**Top 5 FRET Partner Candidates:**")
+                                st.table(top5.reset_index(drop=True))
 
 # Footer
 st.write("---")
