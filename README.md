@@ -17,6 +17,9 @@ Solvent Effect Modeling: Incorporate solvent polarity and environment effects fo
 
 <img width="3902" height="1600" alt="eToC_8-4" src="https://github.com/user-attachments/assets/222a709d-717b-43cf-a219-fc3378ec03b4" />
 
+_**Installation**_
+git clone https://github.com/your-repo/fluorescence-ml.git
+cd fluorescence-ml
 
-
-
+_**Launch Streamlit App:**_
+https://fluromlapp-eavu9hwqdwgwft2ruvquwf.streamlit.app/
