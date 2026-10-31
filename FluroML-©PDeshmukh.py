@@ -87,6 +87,30 @@ def smiles_to_morgan(smiles: str):
         return None
     return dc.feat.CircularFingerprint(radius=3, size=1024).featurize([mol])[0]
 
+# ----------------- Chromophore guard (rule-based post-filter) -----------------
+from collections import defaultdict
+CHROMOPHORE_MIN = 8   # largest conjugated system < 8 atoms = no chromophore -> Non-Fluorescent
+
+def largest_conjugated_system(mol):
+    adj = defaultdict(set)
+    for b in mol.GetBonds():
+        if b.GetIsConjugated() or b.GetIsAromatic():
+            a, c = b.GetBeginAtomIdx(), b.GetEndAtomIdx()
+            adj[a].add(c); adj[c].add(a)
+    seen, best = set(), 0
+    for s in adj:
+        if s in seen:
+            continue
+        st_, n = [s], 0
+        seen.add(s)
+        while st_:
+            x = st_.pop(); n += 1
+            for y in adj[x]:
+                if y not in seen:
+                    seen.add(y); st_.append(y)
+        best = max(best, n)
+    return best
+
 def smiles_to_maccs_arr(smiles: str):
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
@@ -217,7 +241,11 @@ with tab1:
         if feats is not None:
             pred = predict_array(model_fluorescence, feats)
             if pred is not None:
-                st.success("Fluorescent" if int(pred) == 1 else "Non-Fluorescent")
+                conj = largest_conjugated_system(Chem.MolFromSmiles(smiles))
+                if conj < CHROMOPHORE_MIN:
+                    st.success("Non-Fluorescent (no chromophore)")
+                else:
+                    st.success("Fluorescent" if int(pred) == 1 else "Non-Fluorescent")
 
 # =====================================================
 # TAB 2 – Absorption Max Prediction
