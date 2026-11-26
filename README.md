@@ -24,32 +24,25 @@ Machine-learning prediction of fluorescence properties: fluorescent/non-fluoresc
 Live app: https://fluromlapp-eavu9hwqdwgwft2ruvquwf.streamlit.app/
 
 <img width="3902" height="1600" alt="eToC_8-4" src="https://github.com/user-attachments/assets/222a709d-717b-43cf-a219-fc3378ec03b4" />
-Install
+
+**Install**
 bash
 git clone https://github.com/NCL-PDeshmukh/fluroML_app.git
 cd fluroML_app
 conda env create -f environment.yml
 conda activate fluroml
-
 Or with pip on Python 3.11:
-
-bash
+**bash**
 pip install -r requirements.txt
 Run
 bash
 streamlit run "FluroML-©PDeshmukh.py"
-Software versions
-
-Pinned in requirements.txt. Loading the .joblib files under a different scikit-learn version may fail.
-
+**Software versions**
 Python 3.11 · scikit-learn 1.1.2 · rdkit-pypi 2023.3.1b1 · deepchem 2.8.0 · numpy 1.23.5 · pandas 1.5.3 · joblib 1.2.0 · streamlit 1.27.0
-
-Models
+**Models**
 File	Predicts	Model
 best_classifier_compatible.joblib	fluorescent / non-fluorescent	Morgan + RF
 new_best_regressor_compatible.joblib	absorption maximum	MACCS + RF
 best_regressor_emission_compatible.joblib	emission maximum	MACCS + RF
-<!-- TODO: state the training split, and make it match reply to Reviewer 2 comment 5. -->
-Data
-
+**Data**
 FluroML.csv (curated dataset) · Classification_Dataset_11,986.csv · train_set.csv / test_set.csv (70/30 split) · TRAIN_Complete_All_Features.rar / TEST_Complete_All_Features.csv · Morgan,MACCs and RDkit feature.npy.rar · External_Validation_1500.csv
