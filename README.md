@@ -17,6 +17,13 @@ Solvent Effect Modeling: Incorporate solvent polarity and environment effects fo
 
 <img width="3902" height="1600" alt="eToC_8-4" src="https://github.com/user-attachments/assets/222a709d-717b-43cf-a219-fc3378ec03b4" />
 
+FluroML
+
+Machine-learning prediction of fluorescence properties: fluorescent/non-fluorescent classification, absorption and emission maxima, solvent effects, and FRET pair screening.
+
+Live app: https://fluromlapp-eavu9hwqdwgwft2ruvquwf.streamlit.app/
+
+<img width="3902" height="1600" alt="eToC_8-4" src="https://github.com/user-attachments/assets/222a709d-717b-43cf-a219-fc3378ec03b4" />
 Install
 bash
 git clone https://github.com/NCL-PDeshmukh/fluroML_app.git
