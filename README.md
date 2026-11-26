@@ -3,17 +3,17 @@
 
 Machine-learning prediction of fluorescence properties: fluorescent/non-fluorescent classification, absorption and emission maxima, solvent effects, and FRET pair screening.
 
-Live app: https://fluromlapp-eavu9hwqdwgwft2ruvquwf.streamlit.app/
+**Live app**: https://fluromlapp-eavu9hwqdwgwft2ruvquwf.streamlit.app/
 
 Overview
 This project leverages machine learning (ML) to predict fluorescence properties of molecules with high accuracy and robustness. Fluorescence plays a critical role in bioimaging, sensing, and material science. Traditional experimental methods are costly and time-consuming, making computational prediction a powerful alternative.
 Key Features
 
-Reproducible ML Pipeline: End-to-end workflow for data preprocessing, model training, and evaluation.
+**Reproducible ML Pipeline**: End-to-end workflow for data preprocessing, model training, and evaluation.
 
-Interactive Streamlit App: Real-time predictions and visualization for user-friendly exploration.
+**Interactive Streamlit App**: Real-time predictions and visualization for user-friendly exploration.
 
-Advanced Functionalities:
+**Advanced Functionalities:**
 Functional Group Pair Classification: Identify and classify key functional group pairs influencing fluorescence.
 Fluorescence Classification: Predict whether a molecule exhibits fluorescence behavior.
 Spectral Properties Prediction:
