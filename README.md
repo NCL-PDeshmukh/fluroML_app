@@ -1,4 +1,10 @@
-**Robust Prediction of Fluorescence Properties using Machine Learning Approaches**
+
+**FluroML**:**Robust Prediction of Fluorescence Properties using Machine Learning Approaches**
+
+Machine-learning prediction of fluorescence properties: fluorescent/non-fluorescent classification, absorption and emission maxima, solvent effects, and FRET pair screening.
+
+Live app: https://fluromlapp-eavu9hwqdwgwft2ruvquwf.streamlit.app/
+
 Overview
 This project leverages machine learning (ML) to predict fluorescence properties of molecules with high accuracy and robustness. Fluorescence plays a critical role in bioimaging, sensing, and material science. Traditional experimental methods are costly and time-consuming, making computational prediction a powerful alternative.
 Key Features
@@ -17,11 +23,6 @@ Solvent Effect Modeling: Incorporate solvent polarity and environment effects fo
 
 <img width="3902" height="1600" alt="eToC_8-4" src="https://github.com/user-attachments/assets/222a709d-717b-43cf-a219-fc3378ec03b4" />
 
-FluroML
-
-Machine-learning prediction of fluorescence properties: fluorescent/non-fluorescent classification, absorption and emission maxima, solvent effects, and FRET pair screening.
-
-Live app: https://fluromlapp-eavu9hwqdwgwft2ruvquwf.streamlit.app/
 
 **Install**
 bash
